@@ -1,0 +1,118 @@
+================================================================================
+                          AUTOGIF THIRD-PARTY LICENSES
+================================================================================
+
+This file contains licensing information for third-party components included
+with or used by AutoGIF.
+
+================================================================================
+1. FFMPEG
+================================================================================
+License: LGPL v2.1 or later
+Website: https://ffmpeg.org/
+
+FFmpeg is licensed under the GNU Lesser General Public License (LGPL) version 
+2.1 or later. However, FFmpeg incorporates several optional parts and optimizations 
+that are covered by the GNU General Public License (GPL) version 2 or later. 
+If those parts get used the GPL applies to all of FFmpeg.
+
+The Windows binaries included were built from official FFmpeg sources.
+Source code is available at: https://ffmpeg.org/download.html
+
+================================================================================
+2. YT-DLP
+================================================================================
+License: Unlicense (Public Domain)
+Website: https://github.com/yt-dlp/yt-dlp
+
+yt-dlp is released into the public domain by the copyright holders.
+
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute 
+this software, either in source code form or as a compiled binary, for any 
+purpose, commercial or non-commercial, and by any means.
+
+================================================================================
+3. WHISPER (Const-me Windows Build)
+================================================================================
+License: MIT
+Website: https://github.com/Const-me/Whisper
+
+Copyright (c) 2022-2023 Konstantin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+================================================================================
+4. FONTS
+================================================================================
+
+4.1 JetBrains Mono
+------------------
+License: SIL Open Font License 1.1
+Copyright: Copyright 2020 The JetBrains Mono Project Authors
+
+4.2 Fira Code
+-------------
+License: SIL Open Font License 1.1
+Copyright: Copyright (c) 2014, The Fira Code Project Authors
+
+4.3 IBM VGA Font
+----------------
+License: Creative Commons Attribution-ShareAlike 4.0 International
+Copyright: VileR, 2020
+
+4.4 Consolas
+------------
+License: Proprietary (Microsoft)
+Copyright: © Microsoft Corporation. All rights reserved.
+
+NOTE: Consolas is a proprietary font owned by Microsoft. It is typically 
+licensed for use only on systems with a valid Windows license. Users should 
+ensure they have appropriate licensing to use this font.
+
+4.5 Impact
+----------
+License: Proprietary (Microsoft)
+Copyright: © Microsoft Corporation. All rights reserved.
+
+NOTE: Impact is a proprietary font owned by Microsoft. It is typically 
+licensed for use only on systems with a valid Windows license. Users should 
+ensure they have appropriate licensing to use this font.
+
+================================================================================
+5. PYTHON DEPENDENCIES
+================================================================================
+
+Major Python packages and their licenses:
+
+- Gradio: Apache License 2.0
+- Pillow: HPND License
+- OpenCV-Python: Apache License 2.0
+- NumPy: BSD 3-Clause License
+- faster-whisper: MIT License
+- imageio: BSD 2-Clause License
+- Pydantic: MIT License
+- Pandas: BSD 3-Clause License
+
+For complete dependency licensing, run: pip-licenses
+
+================================================================================
+6. NOTICE
+================================================================================
+
+This software is distributed with pre-compiled binaries for user convenience.
+Users are responsible for complying with all applicable licenses when using
+this software.
+
+If you believe any component is incorrectly licensed or attributed, please
+open an issue at: https://github.com/yourusername/autogif/issues
+
+================================================================================ 

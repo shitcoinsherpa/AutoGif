@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autogif"
+version = "1.0.0"
+description = "Transform YouTube videos into stunning animated GIFs with perfectly-timed subtitles"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "AutoGIF Contributors"},
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "gradio>=4.0.0",
+    "pillow>=10.0.0",
+    "opencv-python>=4.8.0",
+    "imageio>=2.31.0",
+    "numpy>=1.24.0",
+    "pydantic>=2.0.0",
+    "faster-whisper>=0.9.0",
+    "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "flake8>=6.1.0",
+    "black>=23.7.0",
+    "sphinx>=7.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/autogif"
+Documentation = "https://github.com/yourusername/autogif/wiki"
+Repository = "https://github.com/yourusername/autogif.git"
+Issues = "https://github.com/yourusername/autogif/issues"
+
+[project.scripts]
+autogif = "autogif.main:main"
+
+[tool.setuptools]
+packages = ["autogif", "autogif.effects", "autogif.effects.plugins"]
+
+[tool.setuptools.package-data]
+autogif = ["fonts/*.ttf", "fonts/*.otf"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # Directories
+  \.eggs
+  | \.git
+  | \.venv
+  | _autogif_temp
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = "-v --tb=short"
+
+[tool.flake8]
+max-line-length = 120
+exclude = [".git", "__pycache__", "build", "dist", ".venv", "_autogif_temp"]
+ignore = ["E203", "W503", "E501"] 

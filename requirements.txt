@@ -1,0 +1,7 @@
+gradio
+pillow
+opencv-python
+imageio
+numpy
+pydantic
+faster-whisper 

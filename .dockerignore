@@ -1,0 +1,74 @@
+# Version control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+_autogif_temp/
+*.gif
+*.mp4
+*.wav
+*.webm
+.autogif/
+logs/
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# Scripts (we'll use Linux versions in container)
+*.bat
+build.sh
+run.sh
+setup-binaries.sh
+Makefile
+
+# Resources we don't need
+resources/*.exe
+resources/ffmpeg.exe
+resources/ffprobe.exe
+resources/ffplay.exe
+resources/yt-dlp.exe
+
+# Keep only what we need
+!requirements.txt
+!autogif/
+!resources/fonts/
+!resources/icon.ico 
