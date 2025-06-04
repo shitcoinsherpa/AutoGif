@@ -30,7 +30,7 @@ Transform YouTube videos into stunning animated GIFs with perfectly-timed, styli
 #### Windows
 
 ```bash
-git clone https://github.com/yourusername/autogif.git
+git clone https://github.com/shitcoinsherpa/autogif.git
 cd autogif
 
 # IMPORTANT: Run build.bat first to set up the environment
@@ -43,7 +43,7 @@ run.bat
 #### macOS / Linux
 
 ```bash
-git clone https://github.com/yourusername/autogif.git
+git clone https://github.com/shitcoinsherpa/autogif.git
 cd autogif
 chmod +x build.sh run.sh
 
