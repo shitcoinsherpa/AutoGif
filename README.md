@@ -43,7 +43,7 @@ run.bat
 #### macOS / Linux
 
 ```bash
-git clone https://github.com/yourusername/autogif.git
+git clone https://github.com/shitcoinsherpa/autogif.git
 cd autogif
 chmod +x build.sh run.sh
 
