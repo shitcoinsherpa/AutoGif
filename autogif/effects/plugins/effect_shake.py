@@ -1,6 +1,6 @@
 from autogif.effects.effect_base import EffectBase
 from PIL import Image, ImageDraw, ImageFont
-import numpy as np
+import math
 import random
 
 def parse_color_to_pil_format(color_input):
@@ -77,7 +77,50 @@ class ShakeEffect(EffectBase):
         return 50
 
     def prepare(self, target_fps: int, **kwargs) -> None:
-        pass
+        """Initialize shake parameters for smooth multi-frequency shake"""
+        self.fps = target_fps
+        
+        # Create multiple frequency components for realistic shake
+        # Like real hand tremor or earthquake motion
+        self.shake_frequencies = [
+            {'freq': 8.0, 'amp_scale': 1.0},    # Primary shake
+            {'freq': 15.0, 'amp_scale': 0.6},   # Secondary tremor
+            {'freq': 25.0, 'amp_scale': 0.3},   # Fine vibration
+        ]
+        
+        # Random phase offsets for each frequency to avoid predictable patterns
+        for freq_data in self.shake_frequencies:
+            freq_data['x_phase'] = random.uniform(0, 2 * math.pi)
+            freq_data['y_phase'] = random.uniform(0, 2 * math.pi)
+
+    def _calculate_shake_offset(self, frame_time: float, intensity: int) -> tuple[float, float]:
+        """Calculate smooth multi-frequency shake offset"""
+        if intensity <= 0:
+            return 0.0, 0.0
+        
+        # Base amplitude from intensity
+        base_amplitude = (intensity / 100.0) * 8.0  # Max 8 pixels
+        
+        total_x = 0.0
+        total_y = 0.0
+        
+        # Combine multiple frequency components
+        for freq_data in self.shake_frequencies:
+            # Calculate sine waves for this frequency
+            x_component = math.sin(2 * math.pi * freq_data['freq'] * frame_time + freq_data['x_phase'])
+            y_component = math.sin(2 * math.pi * freq_data['freq'] * frame_time + freq_data['y_phase'])
+            
+            # Scale by amplitude
+            amplitude = base_amplitude * freq_data['amp_scale']
+            total_x += x_component * amplitude
+            total_y += y_component * amplitude
+        
+        # Add some randomness for less predictable motion (but keep it smooth)
+        random_factor = 0.15  # 15% randomness
+        noise_x = (random.random() - 0.5) * base_amplitude * random_factor
+        noise_y = (random.random() - 0.5) * base_amplitude * random_factor
+        
+        return total_x + noise_x, total_y + noise_y
 
     def transform(self, frame_image: Image.Image, text: str, base_position: tuple[int, int], 
                   current_frame_index: int, intensity: int, 
@@ -86,7 +129,7 @@ class ShakeEffect(EffectBase):
                   text_anchor_x: int, text_anchor_y: int,
                   **kwargs) -> Image.Image:
         """
-        Applies a shake effect to the text by rendering it at a randomly offset position.
+        Applies a smooth, multi-frequency shake effect to the text.
         """
         
         # Convert colors to PIL format
@@ -96,27 +139,20 @@ class ShakeEffect(EffectBase):
         # Create drawing context
         draw = ImageDraw.Draw(frame_image, "RGBA")
 
-        # Calculate shake offset based on intensity
-        max_offset = intensity / 10.0 
-        if max_offset <= 0:
+        # Ensure prepare was called
+        if not hasattr(self, 'shake_frequencies'):
+            self.prepare(12)
+        
+        # Calculate shake offset based on intensity and time
+        if intensity <= 0:
             # No shake, draw normally
-            try:
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="ms", 
-                         stroke_width=outline_width, stroke_fill=pil_outline_color)
-            except TypeError:
-                # Fallback for older PIL versions
-                if outline_width > 0:
-                    for dx_o in range(-outline_width, outline_width + 1):
-                        for dy_o in range(-outline_width, outline_width + 1):
-                            if dx_o != 0 or dy_o != 0:
-                                draw.text((text_anchor_x + dx_o, text_anchor_y + dy_o), text, font=font, fill=pil_outline_color, anchor="ms")
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="ms")
-            return frame_image
-
-        # Generate random shake offset
-        offset_x = random.uniform(-max_offset, max_offset)
-        offset_y = random.uniform(-max_offset, max_offset)
-
+            offset_x, offset_y = 0.0, 0.0
+        else:
+            # Calculate smooth shake offset
+            frame_time = current_frame_index / self.fps
+            offset_x, offset_y = self._calculate_shake_offset(frame_time, intensity)
+        
+        # Apply shake offset to text position
         shaken_anchor_x = int(text_anchor_x + offset_x)
         shaken_anchor_y = int(text_anchor_y + offset_y)
 

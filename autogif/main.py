@@ -353,13 +353,14 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
 
         log_to_gradio(f"Styled preview video generated: {rendered_preview_path} with {total_preview_frames} frames.")
         
-        # Use the calculated frame range instead of total_preview_frames
-        max_frame = max(end_frame, total_preview_frames - 1) if total_preview_frames > 0 else end_frame
-        
+        # Allow generous maximum for user padding - 50% more frames than needed
+        padding_buffer = int(end_frame * 0.5)  # 50% padding allowance
+        max_frame = end_frame + padding_buffer
+
         return {
             log_output: "\n".join(log_messages),
             subtitles_df: subtitles_df_result,
-            current_video_file_path_state: original_video_segment_path, # Keep original for GIF gen
+            current_video_file_path_state: original_video_segment_path,
             styled_preview_video: rendered_preview_path,
             gif_start_frame_input: gr.update(interactive=True, value=start_frame, maximum=max_frame),
             gif_end_frame_input: gr.update(interactive=True, value=end_frame, maximum=max_frame),
@@ -503,10 +504,11 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             )
 
         log_to_gradio(f"Preview successfully regenerated with {total_preview_frames} frames.")
-        
-        # Use the calculated frame range
-        max_frame = max(end_frame, total_preview_frames - 1) if total_preview_frames > 0 else end_frame
-        
+
+        # Allow generous maximum for user padding - 50% more frames than needed
+        padding_buffer = int(end_frame * 0.5)  # 50% padding allowance
+        max_frame = end_frame + padding_buffer
+
         return (
             "\n".join(log_messages),
             rendered_preview_path,

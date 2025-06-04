@@ -423,12 +423,11 @@ def transcribe_audio_fallback(audio_path: str, output_log_callback=None) -> list
             output_log_callback("Make sure faster-whisper is properly installed.")
         return []
 
-# Caption Grouping Logic (as per Section 6) - IMPROVED with sentence boundary detection
 def group_words_into_captions(word_segments: list[dict], max_chars: int = 80, max_duration_sec: float = 5.0, output_log_callback=None) -> list[dict]:
     """
-    Groups word segments into captions based on character limit and duration.
-    STRONGLY prioritizes sentence boundaries - captions will NEVER break mid-sentence unless absolutely forced.
-    Supports multi-line captions with increased limits (80 chars, 5 seconds).
+    Groups word segments into captions based on sentence boundaries.
+    ALWAYS breaks on sentence endings (periods, exclamation marks, question marks) 
+    unless the resulting caption would be extremely short (< 0.5 seconds).
     Each caption will have 'text', 'start_time', 'end_time', 'words'.
     """
     if not word_segments:
@@ -442,117 +441,69 @@ def group_words_into_captions(word_segments: list[dict], max_chars: int = 80, ma
     def is_sentence_end(word: str) -> bool:
         """Check if word ends with sentence-ending punctuation"""
         return word.strip().endswith(('.', '!', '?'))
-    
-    def should_break_here(potential_text: str, potential_duration: float, word: str, force: bool = False) -> bool:
-        """Determine if we should break the caption here - STRONGLY prioritizes sentence boundaries"""
-        char_limit_exceeded = len(potential_text) > max_chars
-        duration_limit_exceeded = potential_duration > max_duration_sec
-        
-        # If this is the last word, we must finalize
-        if force:
-            return True
-        
-        # Check if current word ends a sentence
-        if is_sentence_end(word):
-            # ONLY break at sentence end if we're severely exceeding limits
-            # Allow sentences to go to multiple lines rather than break mid-sentence
-            severe_char_limit = len(potential_text) > (max_chars * 2.5)  # 250% of limit
-            severe_duration_limit = potential_duration > (max_duration_sec * 2.0)  # 200% of limit
-            
-            if severe_char_limit or severe_duration_limit:
-                return True
-            else:
-                # Don't break - let the sentence stay together even if it exceeds normal limits
-                return False
-        
-        # For non-sentence-ending words, only break if we ABSOLUTELY must (extreme limits)
-        extreme_char_limit = len(potential_text) > (max_chars * 3.0)  # 300% of limit - very extreme
-        extreme_duration_limit = potential_duration > (max_duration_sec * 2.5)  # 250% of limit
-        
-        if extreme_char_limit or extreme_duration_limit:
-            # Look back for any sentence boundary in current buffer to break there instead
-            for i in range(len(current_words_buffer) - 1, -1, -1):
-                if is_sentence_end(current_words_buffer[i]["word"]):
-                    # Found a sentence end, break there instead of mid-sentence
-                    return True
-            # No sentence end found and extreme limits exceeded - must break (very rare)
-            if output_log_callback:
-                output_log_callback(f"FORCED to break mid-sentence due to extreme limits: '{potential_text[:50]}...'")
-            return True
-        
-        # Within reasonable limits - never break mid-sentence
-        return False
 
     for i, word_info in enumerate(word_segments):
         word_text = word_info["word"]
         word_start = word_info["start"]
         word_end = word_info["end"]
 
-        if not current_words_buffer: # Starting a new caption
+        if not current_words_buffer:  # Starting a new caption
             current_words_buffer.append(word_info)
             current_text_buffer = word_text
             current_start_time = word_start
         else:
-            # Try adding the new word
+            # Add the new word to see what the caption would look like
             potential_new_text = f"{current_text_buffer} {word_text}"
             potential_duration = word_end - current_start_time
-
-            # Check if we should break the caption
-            is_last_word = (i == len(word_segments) - 1)
             
-            if should_break_here(potential_new_text, potential_duration, word_text, force=is_last_word):
-                # Need to break - find the best sentence boundary
-                break_point = len(current_words_buffer)
-                
-                # Look for the most recent sentence boundary to break at
-                for j in range(len(current_words_buffer) - 1, -1, -1):
-                    if is_sentence_end(current_words_buffer[j]["word"]):
-                        break_point = j + 1
-                        break
-                
-                # Create caption up to break point
-                if break_point > 0:
-                    caption_words = current_words_buffer[:break_point]
-                    caption_text = " ".join([w["word"] for w in caption_words])
-                    
-                    captions.append({
-                        "text": caption_text,
-                        "start_time": current_start_time,
-                        "end_time": caption_words[-1]["end"],
-                        "words": list(caption_words)
-                    })
-                    
-                    if output_log_callback:
-                        reason = "sentence boundary" if break_point < len(current_words_buffer) else "extreme limit exceeded"
-                        output_log_callback(f"Caption break at {reason}: '{caption_text}'")
-                
-                # Start new caption with remaining words + current word
-                remaining_words = current_words_buffer[break_point:] + [word_info]
-                if remaining_words:
-                    current_words_buffer = remaining_words
-                    current_text_buffer = " ".join([w["word"] for w in remaining_words])
-                    current_start_time = remaining_words[0]["start"]
-                else:
-                    current_words_buffer = [word_info]
-                    current_text_buffer = word_text
-                    current_start_time = word_start
-            else:
-                # Word fits or we're keeping sentence together, add it to current caption
-                current_words_buffer.append(word_info)
-                current_text_buffer = potential_new_text
-        
-        # If it's the last word, finalize any pending caption
-        if i == len(word_segments) - 1:
-            if current_words_buffer:
+            # Add the word to current caption
+            current_words_buffer.append(word_info)
+            current_text_buffer = potential_new_text
+
+            # Check if we should break AFTER adding this word
+            should_break = False
+            break_reason = ""
+            
+            # Is this the last word? Must finalize
+            is_last_word = (i == len(word_segments) - 1)
+            if is_last_word:
+                should_break = True
+                break_reason = "end of text"
+            
+            # Does this word end a sentence?
+            elif is_sentence_end(word_text):
+                # Always break on sentence boundaries unless caption would be too short
+                if potential_duration >= 0.5:  # Minimum 0.5 seconds
+                    should_break = True
+                    break_reason = "sentence boundary"
+                # If too short, keep building (very rare case)
+            
+            # Extreme emergency break (should almost never happen)
+            elif (len(potential_new_text) > max_chars * 5.0 or  # 400+ characters
+                  potential_duration > max_duration_sec * 4.0):  # 20+ seconds
+                should_break = True
+                break_reason = "extreme limit exceeded"
+                if output_log_callback:
+                    output_log_callback(f"EMERGENCY: Breaking mid-sentence due to extreme limits: '{potential_new_text[:50]}...'")
+
+            if should_break:
+                # Finalize current caption
                 captions.append({
                     "text": current_text_buffer,
                     "start_time": current_start_time,
                     "end_time": current_words_buffer[-1]["end"],
                     "words": list(current_words_buffer)
                 })
+                
+                if output_log_callback:
+                    output_log_callback(f"Caption break at {break_reason}: '{current_text_buffer}'")
+                
+                # Start new caption (empty, will be filled on next iteration)
+                current_words_buffer = []
+                current_text_buffer = ""
     
     if output_log_callback:
-        output_log_callback(f"Grouped {len(word_segments)} words into {len(captions)} captions with STRONG sentence boundary priority.")
+        output_log_callback(f"Grouped {len(word_segments)} words into {len(captions)} captions, breaking on sentence boundaries.")
         for idx, cap in enumerate(captions):
             output_log_callback(f"  Caption {idx+1}: '{cap['text']}'")
 
@@ -723,7 +674,7 @@ def generate_gif(
     # Import necessary libraries for image manipulation (Pillow, OpenCV, imageio)
     try:
         import cv2
-        from PIL import Image, ImageDraw, ImageFont, ImageChops
+        from PIL import Image, ImageDraw, ImageFont
         import imageio
         import numpy as np
         import math
@@ -735,7 +686,6 @@ def generate_gif(
     if output_log_callback: output_log_callback(f"Grouping words into captions...")
     captions = group_words_into_captions(subtitles_data, max_chars=80, max_duration_sec=5.0, output_log_callback=output_log_callback)
     
-    # CRITICAL FIX: Check subtitle data extent and ensure we process enough frames
     if subtitles_data:
         subtitle_end_time = calculate_subtitle_duration(subtitles_data)
         if output_log_callback:
@@ -819,7 +769,7 @@ def generate_gif(
         if output_log_callback: output_log_callback(f"Warning: Source FPS is invalid ({source_fps}), assuming 25.")
         source_fps = 25 
     
-    # CRITICAL FIX: Calculate proper time range that ensures all subtitle data is captured
+    # Calculate proper time range that ensures all subtitle data is captured
     start_time_seconds = start_frame_num / output_fps
     
     # Calculate end time ensuring we capture all subtitle data
@@ -830,18 +780,20 @@ def generate_gif(
         # Update end_frame_num based on this calculation
         end_frame_num = math.ceil(end_time_seconds * output_fps)
     else:
-        # CRITICAL FIX: Ensure end time covers all subtitle data
+        # User specified exact end frame - respect their choice
+        # Convert frame number to time (end_frame_num is inclusive, so we need +1 to get the time AFTER the last frame)
+        user_requested_end_time = (end_frame_num + 1) / output_fps
+    
+        # Only extend if subtitle data goes beyond user's request
         subtitle_duration = calculate_subtitle_duration(subtitles_data) if subtitles_data else 0
-        calculated_end_time = (end_frame_num + 1) / output_fps  # +1 to make it inclusive
-        
-        # If the calculated end time doesn't cover all subtitles, extend it
-        if subtitle_duration > 0 and calculated_end_time < subtitle_duration:
-            end_time_seconds = subtitle_duration + 1.0  # 1.0s buffer
+        if subtitle_duration > 0 and user_requested_end_time < subtitle_duration:
+            end_time_seconds = subtitle_duration + 0.5  # Smaller buffer when extending
             end_frame_num = math.ceil(end_time_seconds * output_fps)
             if output_log_callback:
-                output_log_callback(f"Extended end time from {calculated_end_time:.2f}s to {end_time_seconds:.2f}s to cover subtitle ending at {subtitle_duration:.2f}s")
+                output_log_callback(f"Extended end time from {user_requested_end_time:.2f}s to {end_time_seconds:.2f}s to cover subtitle ending at     {subtitle_duration:.2f}s")
         else:
-            end_time_seconds = calculated_end_time + 1.0  # Still add buffer
+            # Use exactly what the user requested, no extra buffer
+            end_time_seconds = user_requested_end_time
     
     if output_log_callback:
         output_log_callback(f"Selected time range: {start_time_seconds:.2f}s to {end_time_seconds:.2f}s")
@@ -872,7 +824,7 @@ def generate_gif(
     # This determines which frames from the *original video* are candidates.
     gif_frame_skip_factor = max(1, int(np.ceil(source_fps / output_fps)))
 
-    # CRITICAL FIX: Map frame numbers correctly to source video timing
+    # Map frame numbers correctly to source video timing
     # We need to process frames from start_time_seconds to end_time_seconds
     actual_start_source_frame_idx = int(start_time_seconds * source_fps)
     actual_end_source_frame_idx = int(end_time_seconds * source_fps)
@@ -898,26 +850,33 @@ def generate_gif(
             expected_frames_needed = math.ceil(last_word_end * output_fps)
             output_log_callback(f"Expected frames needed to cover all subtitles: {expected_frames_needed}")
 
+    # Separate effects into text effects and full-frame effects
+    text_effects_configs = []
+    full_frame_effects_configs = []
+    
+    for effect_config in selected_effects:
+        if effect_config.get("enabled", False):
+            instance = effect_config.get("instance")
+            if instance:
+                effect_config_dict = {
+                    "instance": instance, 
+                    "intensity": effect_config.get("intensity", 50),
+                    "slug": instance.slug
+                }
+                
+                # Check if this is a full-frame effect (like VHS/CRT)
+                if instance.slug == "vhs-crt":
+                    full_frame_effects_configs.append(effect_config_dict)
+                else:
+                    text_effects_configs.append(effect_config_dict)
+
     processed_frames_for_gif = []
     # frame_read_count tracks frames read from the *original* video segment.
     frame_read_count = 0 
     # gif_frame_count tracks frames *added* to the GIF (after skipping and deduplication).
     gif_frame_count = 0 
     # output_gif_frame_idx tracks conceptual *output* frames for the GIF (before deduplication, relative to start_frame_num)
-    output_gif_frame_idx = 0 
-    last_added_pil_frame_for_deduplication = None
-
-    # CRITICAL FIX: Prepare active effects configs BEFORE any detection logic
-    effects_to_apply_configs = []
-    for effect_config in selected_effects:
-        if effect_config.get("enabled", False):
-            instance = effect_config.get("instance") # This is the shared instance from AVAILABLE_EFFECTS
-            if instance:
-                effects_to_apply_configs.append({
-                    "instance": instance, 
-                    "intensity": effect_config.get("intensity", 50),
-                    "slug": instance.slug # Store slug for potential state management
-                })
+    output_gif_frame_idx = 0
 
     if output_log_callback: output_log_callback("Processing video frames...")
     
@@ -944,7 +903,7 @@ def generate_gif(
             frame_read_count += 1
             continue # Skip this source frame based on target GIF FPS
 
-        # FIXED: Calculate the time of this frame based on its position in the source video
+        # Calculate the time of this frame based on its position in the source video
         current_source_frame_time = frame_read_count / source_fps
 
         # Keep video frame as RGB - don't convert to RGBA unnecessarily
@@ -960,46 +919,18 @@ def generate_gif(
         else:
             new_width, new_height = original_width, original_height
 
-        # Find active caption at this time (for effects like typewriter that need full caption text)
+        # Find active caption at this time - ALL effects use full captions
         active_caption = None
         active_caption_text_for_frame = None
         
-        # CRITICAL FIX: Check if any text-drawing effect is active - USE effects_to_apply_configs consistently
-        text_drawing_effects = {"typewriter", "fade", "glow", "neon", "shake", "wave", "bounce", "rainbow", "glitch", "sparkle"}
-        has_text_drawing_effect = False
-        for effect_config_item in effects_to_apply_configs:  # FIXED: Use same list as skip logic
-            if effect_config_item["slug"] in text_drawing_effects:
-                has_text_drawing_effect = True
+        for caption in captions:
+            if caption['start_time'] <= current_source_frame_time < caption['end_time']:
+                active_caption = caption
+                active_caption_text_for_frame = caption['text']
                 break
         
-        if has_text_drawing_effect:
-            # For text-drawing effects, find the active caption
-            for caption in captions:
-                if caption['start_time'] <= current_source_frame_time < caption['end_time']:
-                    active_caption = caption
-                    active_caption_text_for_frame = caption['text']
-                    break
-            # If no caption found, set text to None - effects won't be applied when text is None
-            if not active_caption:
-                active_caption_text_for_frame = None
-        else:
-            # For non-text-drawing effects, use word-level timing for natural subtitle display
-            active_words_at_time = []
-            for word_info in active_subtitles:
-                # FIXED: Use <= for end time to include words that end exactly at current time
-                if word_info["start"] <= current_source_frame_time <= word_info["end"]:
-                    active_words_at_time.append(word_info["word"])
-            
-            active_caption_text_for_frame = " ".join(active_words_at_time) if active_words_at_time else None
-            
-            # Find caption for effect timing purposes
-            for caption in captions:
-                if caption['start_time'] <= current_source_frame_time < caption['end_time']:
-                    active_caption = caption
-                    break
-        
         if output_log_callback and output_gif_frame_idx % (output_fps * 2) == 0:  # Log every 2 seconds
-            effect_mode = "caption-based" if has_text_drawing_effect else "word-based"
+            effect_mode = "caption-based"
             active_words_debug = [w["word"] for w in active_subtitles if w["start"] <= current_source_frame_time <= w["end"]]
             output_log_callback(f"Frame {output_gif_frame_idx}: time={current_source_frame_time:.2f}s, mode={effect_mode}, active_words={active_words_debug}, text='{active_caption_text_for_frame[:30] if active_caption_text_for_frame else 'None'}...'")
         
@@ -1014,10 +945,11 @@ def generate_gif(
                 base_text_position_on_canvas = (int(initial_text_anchor_x), int(initial_text_anchor_y))
 
                 try: # Outer try for all text rendering and effects on canvas
-                    # CRITICAL FIX: Check if any text-drawing effect is active - USE SAME LIST
+                    # Only skip normal text rendering for word-level effects (like typewriter)
                     skip_normal_text = False
-                    for effect_config_item in effects_to_apply_configs:  # FIXED: Same list, same structure
-                        if effect_config_item["slug"] in text_drawing_effects:
+                    word_level_effects = {"typewriter"}
+                    for effect_config_item in text_effects_configs:
+                        if effect_config_item["slug"] in word_level_effects:
                             skip_normal_text = True
                             break
                     
@@ -1035,11 +967,11 @@ def generate_gif(
                             max_width=int(new_width * 0.9)  # Allow text to use 90% of frame width
                         )
 
-                    # 2. Apply active effects to text_canvas
+                    # 2. Apply active text effects to text_canvas
                     current_canvas_for_effects = text_canvas 
-                    if effects_to_apply_configs: 
+                    if text_effects_configs: 
                         if output_log_callback and gif_frame_count % (output_fps * 5) == 0: 
-                            output_log_callback(f"Applying effects to text canvas for frame {gif_frame_count}...")
+                            output_log_callback(f"Applying text effects to text canvas for frame {gif_frame_count}...")
                     
                     # For effects, we need to find which caption this frame belongs to for proper timing
                     # active_caption is already set above based on effect type
@@ -1056,7 +988,7 @@ def generate_gif(
                     
                     relative_frame_idx_for_caption_effect = max(0, output_gif_frame_idx - caption_start_gif_frame_for_effect)
 
-                    for effect_config_item in effects_to_apply_configs:
+                    for effect_config_item in text_effects_configs:
                         effect_instance = effect_config_item["instance"]
                         effect_intensity = effect_config_item["intensity"]
                         effect_slug = effect_config_item["slug"]
@@ -1138,6 +1070,47 @@ def generate_gif(
             except Exception as e_text_render:
                 if output_log_callback: output_log_callback(f"Error rendering text: {e_text_render}")
 
+        # NOW APPLY FULL-FRAME EFFECTS (like VHS/CRT) to the complete frame with text composited
+        if full_frame_effects_configs:
+            for effect_config_item in full_frame_effects_configs:
+                effect_instance = effect_config_item["instance"]
+                effect_intensity = effect_config_item["intensity"]
+                effect_slug = effect_config_item["slug"]
+                
+                try:
+                    # Prepare the full-frame effect
+                    effect_instance.prepare(
+                        target_fps=output_fps, 
+                        caption_natural_duration_sec=2.0,  # Default duration for full-frame effects
+                        text_length=len(active_caption_text_for_frame) if active_caption_text_for_frame else 0,
+                        intensity=effect_intensity
+                    )
+                    
+                    # Apply the effect to the full frame (video + text)
+                    pil_frame = effect_instance.transform(
+                        frame_image=pil_frame,
+                        text=active_caption_text_for_frame or "",
+                        base_position=(new_width // 2, new_height // 2),
+                        current_frame_index=output_gif_frame_idx,
+                        intensity=effect_intensity,
+                        font=pil_font,
+                        font_color=font_color,
+                        outline_color=outline_color_hex,
+                        outline_width=outline_width,
+                        frame_width=new_width,
+                        frame_height=new_height,
+                        text_anchor_x=new_width // 2,
+                        text_anchor_y=int(new_height * 0.90),
+                        target_fps=output_fps
+                    )
+                    
+                    if output_log_callback and gif_frame_count % (output_fps * 5) == 0:
+                        output_log_callback(f"Applied full-frame effect {effect_slug} to frame {gif_frame_count}")
+                        
+                except Exception as e_full_frame_effect:
+                    if output_log_callback:
+                        output_log_callback(f"Error applying full-frame effect {effect_slug}: {e_full_frame_effect}")
+
         # Keep frame as RGB - no palette conversion needed
         # This avoids solarization issues from palette conversion
         final_rgb_frame = pil_frame.convert("RGB")
@@ -1161,35 +1134,14 @@ def generate_gif(
                         output_log_callback(f"Applied {padding_duration_for_this_caption:.2f}s padding to GIF frame {output_gif_frame_idx} for caption '{caption['text'][:20]}...'")
                     break
         
-        # --- Duplicate Frame Detection (Section 7) ---
-        is_duplicate = False
-        if last_added_pil_frame_for_deduplication and not padding_applied_this_frame:
-            try:
-                # Compare RGB frames directly - no palette conversion needed
-                diff = ImageChops.difference(final_rgb_frame, last_added_pil_frame_for_deduplication)
-                mean_diff = np.mean(np.array(diff)) / 255.0 
-                if mean_diff < 0.02: # Threshold from spec
-                    is_duplicate = True
-                    if output_log_callback and output_gif_frame_idx % (output_fps * 2) == 0: # Log less frequently
-                         output_log_callback(f"Duplicate frame detected (diff: {mean_diff:.4f}) at GIF frame index {output_gif_frame_idx}. Extending previous frame duration.")
-            except Exception as e_dedup:
-                if output_log_callback:
-                    output_log_callback(f"Warning: Error during duplicate frame detection: {e_dedup}")
-        
-        if is_duplicate and processed_frames_for_gif: # Ensure there is a previous frame to extend
-            # Extend the duration of the *last frame already added* to the list
-            processed_frames_for_gif[-1]["duration"] += current_gif_frame_duration # Add this frame's intended duration to the previous one
-            # Don't update last_added_pil_frame_for_deduplication because we are reusing the previous one.
-        else:
-            # Not a duplicate, or it's the first frame, or padding was applied making its duration unique.
-            processed_frames_for_gif.append({"image": final_rgb_frame, "duration": current_gif_frame_duration})
-            last_added_pil_frame_for_deduplication = final_rgb_frame # Update for next comparison
-            gif_frame_count +=1 # Counts actual unique frames added to GIF list
+        # Add frame to GIF (no duplicate detection)
+        processed_frames_for_gif.append({"image": final_rgb_frame, "duration": current_gif_frame_duration})
+        gif_frame_count += 1
         
         output_gif_frame_idx += 1 # This always increments for each frame *selected for processing* for the GIF
 
         if output_log_callback and output_gif_frame_idx % output_fps == 0: 
-            output_log_callback(f"Processed up to GIF frame {output_gif_frame_idx} ({output_gif_frame_idx/output_fps:.1f}s). Actual frames in GIF list: {gif_frame_count}")
+            output_log_callback(f"Processed up to GIF frame {output_gif_frame_idx} ({output_gif_frame_idx/output_fps:.1f}s). Total frames in GIF: {gif_frame_count}")
         
         frame_read_count += 1 # Crucial: increment after processing the current frame
 
@@ -1311,7 +1263,7 @@ def render_preview_video(
 
     skip_factor = max(1, int(np.ceil(source_fps / output_fps)))
     
-    # CRITICAL FIX: Calculate the required frames to cover all subtitle data
+    # Calculate the required frames to cover all subtitle data
     required_frames = calculate_required_frames(subtitles_data, output_fps, buffer_seconds=1.0)  # Increased buffer
     max_possible_frames = int(total_source_frames / skip_factor)
     
@@ -1339,22 +1291,30 @@ def render_preview_video(
     frame_read_count = 0
     preview_frame_count = 0
 
-    # CRITICAL FIX: Prepare active effects - THIS SHOULD MATCH GIF LOGIC EXACTLY
-    effects_to_apply_configs = []
+    # Separate effects into text effects and full-frame effects
+    text_effects_configs = []
+    full_frame_effects_configs = []
+    
     for effect_config in selected_effects:
         if effect_config.get("enabled", False):
             instance = effect_config.get("instance")
             if instance:
-                effects_to_apply_configs.append({
+                effect_config_dict = {
                     "instance": instance, 
                     "intensity": effect_config.get("intensity", 50),
-                    "slug": instance.slug  # Store slug for checking
-                })
+                    "slug": instance.slug
+                }
+                
+                # Check if this is a full-frame effect (like VHS/CRT)
+                if instance.slug == "vhs-crt":
+                    full_frame_effects_configs.append(effect_config_dict)
+                else:
+                    text_effects_configs.append(effect_config_dict)
 
     if output_log_callback: output_log_callback("Processing frames for preview video...")
     
     # --- 3. Main Frame Loop for Preview Video ---
-    # CRITICAL FIX: Calculate target frames based on subtitle data, not just skip factor
+    # Calculate target frames based on subtitle data, not just skip factor
     max_time_needed = end_time_seconds if subtitles_data else (total_source_frames / source_fps)
     max_source_frames_needed = min(int(max_time_needed * source_fps) + skip_factor, total_source_frames)  # Add buffer
     target_preview_frames = min(required_frames, int(max_source_frames_needed / skip_factor) + 1)
@@ -1377,7 +1337,7 @@ def render_preview_video(
             frame_read_count += 1
             continue # Skip this source frame based on target preview FPS
 
-        # CRITICAL FIX: Calculate time based on actual source frame position (same as GIF)
+        # Calculate time based on actual source frame position (same as GIF)
         current_source_frame_time = frame_read_count / source_fps
         
         pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -1391,42 +1351,15 @@ def render_preview_video(
         else:
             new_width, new_height = original_width, original_height
 
-        # Find active caption at this time - SAME LOGIC AS GIF for consistency
+        # Find active caption at this time - ALL effects use full captions
         active_caption = None
         active_caption_text_for_frame = None
         
-        # CRITICAL FIX: Check if any text-drawing effect is active - USE effects_to_apply_configs consistently
-        text_drawing_effects = {"typewriter", "fade", "glow", "neon", "shake", "wave", "bounce", "rainbow", "glitch", "sparkle"}
-        has_text_drawing_effect = False
-        for effect_config_item in effects_to_apply_configs:  # FIXED: Use same list as GIF logic
-            if effect_config_item["slug"] in text_drawing_effects:
-                has_text_drawing_effect = True
+        for caption in captions:
+            if caption['start_time'] <= current_source_frame_time < caption['end_time']:
+                active_caption = caption
+                active_caption_text_for_frame = caption['text']
                 break
-        
-        if has_text_drawing_effect:
-            # For text-drawing effects, find the active caption
-            for caption in captions:
-                if caption['start_time'] <= current_source_frame_time < caption['end_time']:
-                    active_caption = caption
-                    active_caption_text_for_frame = caption['text']
-                    break
-        else:
-            # For non-text-drawing effects, use word-level timing for natural subtitle display
-            active_words_at_time = []
-            for word_info in subtitles_data:
-                # FIXED: Use <= for end time to include words that end exactly at current time
-                # Use same logic as GIF generation
-                if word_info["start"] <= current_source_frame_time <= word_info["end"]:
-                    active_words_at_time.append(word_info["word"])
-            
-            active_caption_text_for_frame = " ".join(active_words_at_time) if active_words_at_time else None
-            
-            # Find caption for effect timing purposes
-            for caption in captions:
-                if caption['start_time'] <= current_source_frame_time < caption['end_time']:
-                    active_caption = caption
-                    break
-
         # Text & Effects rendering (using the separate canvas method from generate_gif)
         if active_caption_text_for_frame:
             text_canvas = Image.new("RGBA", (new_width, new_height), (0,0,0,0))
@@ -1436,10 +1369,11 @@ def render_preview_video(
             base_text_position_on_canvas = (int(initial_text_anchor_x), int(initial_text_anchor_y))
 
             try: # Text drawing and effects on canvas
-                # CRITICAL FIX: Check if any text-drawing effect is active - USE SAME LIST
+                # Only skip normal text rendering for word-level effects (like typewriter)
                 skip_normal_text = False
-                for effect_config_item in effects_to_apply_configs:  # FIXED: Use same list, same structure
-                    if effect_config_item["slug"] in text_drawing_effects:
+                word_level_effects = {"typewriter"}
+                for effect_config_item in text_effects_configs:
+                    if effect_config_item["slug"] in word_level_effects:
                         skip_normal_text = True
                         break
                 
@@ -1473,7 +1407,7 @@ def render_preview_video(
                 
                 relative_frame_idx = max(0, preview_frame_count - caption_start_preview_frame)
                 
-                for effect_config_item in effects_to_apply_configs:
+                for effect_config_item in text_effects_configs:
                     inst, intensity_val = effect_config_item["instance"], effect_config_item["intensity"]
                     
                     # Prepare effect for this caption with all required parameters - MATCH GIF LOGIC
@@ -1549,6 +1483,47 @@ def render_preview_video(
             except Exception as e_render_preview:
                 if output_log_callback: output_log_callback(f"Error rendering text/effects on frame for preview: {e_render_preview}")
         
+        # NOW APPLY FULL-FRAME EFFECTS (like VHS/CRT) to the complete frame with text composited
+        if full_frame_effects_configs:
+            for effect_config_item in full_frame_effects_configs:
+                effect_instance = effect_config_item["instance"]
+                effect_intensity = effect_config_item["intensity"]
+                effect_slug = effect_config_item["slug"]
+                
+                try:
+                    # Prepare the full-frame effect
+                    effect_instance.prepare(
+                        target_fps=output_fps, 
+                        caption_natural_duration_sec=2.0,  # Default duration for full-frame effects
+                        text_length=len(active_caption_text_for_frame) if active_caption_text_for_frame else 0,
+                        intensity=effect_intensity
+                    )
+                    
+                    # Apply the effect to the full frame (video + text)
+                    pil_frame = effect_instance.transform(
+                        frame_image=pil_frame,
+                        text=active_caption_text_for_frame or "",
+                        base_position=(new_width // 2, new_height // 2),
+                        current_frame_index=preview_frame_count,
+                        intensity=effect_intensity,
+                        font=pil_font,
+                        font_color=font_color,
+                        outline_color=outline_color_hex,
+                        outline_width=outline_width,
+                        frame_width=new_width,
+                        frame_height=new_height,
+                        text_anchor_x=new_width // 2,
+                        text_anchor_y=int(new_height * 0.90),
+                        target_fps=output_fps
+                    )
+                    
+                    if output_log_callback and preview_frame_count % (output_fps * 5) == 0:
+                        output_log_callback(f"Applied full-frame effect {effect_slug} to preview frame {preview_frame_count}")
+                        
+                except Exception as e_full_frame_effect:
+                    if output_log_callback:
+                        output_log_callback(f"Error applying full-frame effect {effect_slug} to preview: {e_full_frame_effect}")
+
         # Save frame as image file
         frame_filename = os.path.join(temp_frames_dir, f"frame_{preview_frame_count:06d}.png")
         pil_frame.convert("RGB").save(frame_filename, "PNG")
