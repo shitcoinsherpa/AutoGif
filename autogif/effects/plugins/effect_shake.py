@@ -63,6 +63,104 @@ def parse_color_to_pil_format(color_input):
     # This handles CSS color names like "red", "blue", etc.
     return color_str
 
+def draw_text_with_outline(draw, position, text, font, font_color, outline_color, outline_width, anchor="mm", max_width=None):
+    """Helper function to draw text with outline, handling different PIL versions, color formats, and multi-line text"""
+    
+    # Convert colors to PIL-compatible format
+    pil_font_color = parse_color_to_pil_format(font_color)
+    pil_outline_color = parse_color_to_pil_format(outline_color)
+    
+    # Handle multi-line text if max_width is specified
+    if max_width and len(text) > 0:
+        words = text.split(' ')
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            try:
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                line_width = bbox[2] - bbox[0]
+            except AttributeError:
+                # Fallback for older PIL versions
+                line_width = draw.textsize(test_line, font=font)[0]
+            
+            if line_width <= max_width or not current_line:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        # Calculate line height
+        try:
+            bbox = draw.textbbox((0, 0), "Ay", font=font)
+            line_height = bbox[3] - bbox[1]
+        except AttributeError:
+            line_height = draw.textsize("Ay", font=font)[1]
+        
+        # Calculate total text block height and adjust position
+        total_height = len(lines) * line_height + (len(lines) - 1) * 4  # 4px line spacing
+        
+        # Adjust starting position based on anchor
+        if anchor.endswith('s'):  # bottom anchor
+            start_y = position[1] - total_height
+        elif anchor.endswith('m'):  # middle anchor
+            start_y = position[1] - total_height // 2
+        else:  # top anchor
+            start_y = position[1]
+        
+        # Draw each line
+        for i, line in enumerate(lines):
+            line_y = start_y + i * (line_height + 4)
+            line_pos = (position[0], line_y)
+            
+            try:
+                # Try modern PIL approach with stroke support
+                if outline_width > 0:
+                    draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t",
+                             stroke_width=outline_width, stroke_fill=pil_outline_color)
+                else:
+                    draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t")
+            except (TypeError, AttributeError):
+                # Fallback for older PIL versions
+                if outline_width > 0:
+                    for dx in range(-outline_width, outline_width + 1):
+                        for dy in range(-outline_width, outline_width + 1):
+                            if dx != 0 or dy != 0:
+                                outline_pos = (line_pos[0] + dx, line_pos[1] + dy)
+                                draw.text(outline_pos, line, font=font, fill=pil_outline_color, anchor=anchor[0]+"t")
+                draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t")
+        
+        return True
+    
+    # Single line text (original logic)
+    try:
+        # Try modern PIL approach with stroke support
+        if hasattr(draw, "text") and hasattr(draw, "textbbox"):
+            # Test if stroke_width parameter is supported
+            draw.text(position, text, font=font, fill=pil_font_color, anchor=anchor,
+                     stroke_width=outline_width, stroke_fill=pil_outline_color)
+            return True
+    except (TypeError, AttributeError):
+        pass
+    
+    # Fallback to manual outline drawing for older PIL versions
+    if outline_width > 0:
+        # Draw outline by drawing text multiple times with offsets
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
+                if dx != 0 or dy != 0:
+                    outline_pos = (position[0] + dx, position[1] + dy)
+                    draw.text(outline_pos, text, font=font, fill=pil_outline_color, anchor=anchor)
+    
+    # Draw main text
+    draw.text(position, text, font=font, fill=pil_font_color, anchor=anchor)
+    return True
+
 class ShakeEffect(EffectBase):
     @property
     def slug(self) -> str:
@@ -127,17 +225,20 @@ class ShakeEffect(EffectBase):
                   font: ImageFont.FreeTypeFont, font_color: str, 
                   outline_color: str, outline_width: int, 
                   text_anchor_x: int, text_anchor_y: int,
+                  frame_width: int, frame_height: int,
                   **kwargs) -> Image.Image:
         """
         Applies a smooth, multi-frequency shake effect to the text.
         """
+        # Ensure frame is RGBA mode
+        if frame_image.mode != "RGBA":
+            frame_image = frame_image.convert("RGBA")
         
-        # Convert colors to PIL format
-        pil_font_color = parse_color_to_pil_format(font_color)
-        pil_outline_color = parse_color_to_pil_format(outline_color)
+        # Create a new blank canvas since shake replaces all text rendering
+        blank_canvas = Image.new("RGBA", frame_image.size, (0, 0, 0, 0))
         
-        # Create drawing context
-        draw = ImageDraw.Draw(frame_image, "RGBA")
+        if not text:
+            return blank_canvas
 
         # Ensure prepare was called
         if not hasattr(self, 'shake_frequencies'):
@@ -156,17 +257,17 @@ class ShakeEffect(EffectBase):
         shaken_anchor_x = int(text_anchor_x + offset_x)
         shaken_anchor_y = int(text_anchor_y + offset_y)
 
-        # Draw text at shaken position
-        try:
-            draw.text((shaken_anchor_x, shaken_anchor_y), text, font=font, fill=pil_font_color, anchor="ms", 
-                     stroke_width=outline_width, stroke_fill=pil_outline_color)
-        except TypeError:
-            # Fallback for older PIL versions
-            if outline_width > 0:
-                for dx_o in range(-outline_width, outline_width + 1):
-                    for dy_o in range(-outline_width, outline_width + 1):
-                        if dx_o != 0 or dy_o != 0:
-                            draw.text((shaken_anchor_x + dx_o, shaken_anchor_y + dy_o), text, font=font, fill=pil_outline_color, anchor="ms")
-            draw.text((shaken_anchor_x, shaken_anchor_y), text, font=font, fill=pil_font_color, anchor="ms")
+        # Draw text at shaken position with multi-line support
+        draw_text_with_outline(
+            ImageDraw.Draw(blank_canvas), 
+            (shaken_anchor_x, shaken_anchor_y), 
+            text,
+            font, 
+            font_color, 
+            outline_color, 
+            outline_width, 
+            anchor="ms",
+            max_width=int(frame_width * 0.9)
+        )
             
-        return frame_image
+        return blank_canvas

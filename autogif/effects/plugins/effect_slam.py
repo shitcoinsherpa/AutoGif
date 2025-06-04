@@ -54,6 +54,104 @@ def parse_color_to_pil_format(color_input):
     
     return color_str
 
+def draw_text_with_outline(draw, position, text, font, font_color, outline_color, outline_width, anchor="mm", max_width=None):
+    """Helper function to draw text with outline, handling different PIL versions, color formats, and multi-line text"""
+    
+    # Convert colors to PIL-compatible format
+    pil_font_color = parse_color_to_pil_format(font_color)
+    pil_outline_color = parse_color_to_pil_format(outline_color)
+    
+    # Handle multi-line text if max_width is specified
+    if max_width and len(text) > 0:
+        words = text.split(' ')
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            try:
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                line_width = bbox[2] - bbox[0]
+            except AttributeError:
+                # Fallback for older PIL versions
+                line_width = draw.textsize(test_line, font=font)[0]
+            
+            if line_width <= max_width or not current_line:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        # Calculate line height
+        try:
+            bbox = draw.textbbox((0, 0), "Ay", font=font)
+            line_height = bbox[3] - bbox[1]
+        except AttributeError:
+            line_height = draw.textsize("Ay", font=font)[1]
+        
+        # Calculate total text block height and adjust position
+        total_height = len(lines) * line_height + (len(lines) - 1) * 4  # 4px line spacing
+        
+        # Adjust starting position based on anchor
+        if anchor.endswith('s'):  # bottom anchor
+            start_y = position[1] - total_height
+        elif anchor.endswith('m'):  # middle anchor
+            start_y = position[1] - total_height // 2
+        else:  # top anchor
+            start_y = position[1]
+        
+        # Draw each line
+        for i, line in enumerate(lines):
+            line_y = start_y + i * (line_height + 4)
+            line_pos = (position[0], line_y)
+            
+            try:
+                # Try modern PIL approach with stroke support
+                if outline_width > 0:
+                    draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t",
+                             stroke_width=outline_width, stroke_fill=pil_outline_color)
+                else:
+                    draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t")
+            except (TypeError, AttributeError):
+                # Fallback for older PIL versions
+                if outline_width > 0:
+                    for dx in range(-outline_width, outline_width + 1):
+                        for dy in range(-outline_width, outline_width + 1):
+                            if dx != 0 or dy != 0:
+                                outline_pos = (line_pos[0] + dx, line_pos[1] + dy)
+                                draw.text(outline_pos, line, font=font, fill=pil_outline_color, anchor=anchor[0]+"t")
+                draw.text(line_pos, line, font=font, fill=pil_font_color, anchor=anchor[0]+"t")
+        
+        return True
+    
+    # Single line text (original logic)
+    try:
+        # Try modern PIL approach with stroke support
+        if hasattr(draw, "text") and hasattr(draw, "textbbox"):
+            # Test if stroke_width parameter is supported
+            draw.text(position, text, font=font, fill=pil_font_color, anchor=anchor,
+                     stroke_width=outline_width, stroke_fill=pil_outline_color)
+            return True
+    except (TypeError, AttributeError):
+        pass
+    
+    # Fallback to manual outline drawing for older PIL versions
+    if outline_width > 0:
+        # Draw outline by drawing text multiple times with offsets
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
+                if dx != 0 or dy != 0:
+                    outline_pos = (position[0] + dx, position[1] + dy)
+                    draw.text(outline_pos, text, font=font, fill=pil_outline_color, anchor=anchor)
+    
+    # Draw main text
+    draw.text(position, text, font=font, fill=pil_font_color, anchor=anchor)
+    return True
+
 class SlamEffect(EffectBase):
     @property
     def slug(self) -> str:
@@ -101,23 +199,18 @@ class SlamEffect(EffectBase):
         blank_canvas = Image.new("RGBA", frame_image.size, (0, 0, 0, 0))
         
         if not text or intensity == 0:
-            # No slam, draw normally
-            draw = ImageDraw.Draw(blank_canvas)
-            pil_font_color = parse_color_to_pil_format(font_color)
-            pil_outline_color = parse_color_to_pil_format(outline_color)
-            
-            try:
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, 
-                         anchor="ms", stroke_width=outline_width, stroke_fill=pil_outline_color)
-            except (TypeError, AttributeError):
-                if outline_width > 0:
-                    for dx in range(-outline_width, outline_width + 1):
-                        for dy in range(-outline_width, outline_width + 1):
-                            if dx != 0 or dy != 0:
-                                draw.text((text_anchor_x + dx, text_anchor_y + dy), text, 
-                                        font=font, fill=pil_outline_color, anchor="ms")
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="ms")
-            
+            # No slam, draw normally with multi-line support
+            draw_text_with_outline(
+                ImageDraw.Draw(blank_canvas), 
+                (text_anchor_x, text_anchor_y), 
+                text,
+                font, 
+                font_color, 
+                outline_color, 
+                outline_width, 
+                anchor="ms",
+                max_width=int(frame_width * 0.9)
+            )
             return blank_canvas
         
         # Ensure slam is prepared
@@ -232,21 +325,20 @@ class SlamEffect(EffectBase):
             slam_color = original_color
             slam_outline = parse_color_to_pil_format(outline_color)
         
-        # Draw the slamming text
+        # Draw the slamming text with multi-line support
         enhanced_outline_width = outline_width + (2 if shockwave_radius > 0 else 0)
         
-        try:
-            draw.text((text_anchor_x, slam_text_y), text, font=scaled_font, fill=slam_color, 
-                     anchor="ms", stroke_width=enhanced_outline_width, stroke_fill=slam_outline)
-        except (TypeError, AttributeError):
-            # Fallback for older PIL
-            if enhanced_outline_width > 0:
-                for dx in range(-enhanced_outline_width, enhanced_outline_width + 1):
-                    for dy in range(-enhanced_outline_width, enhanced_outline_width + 1):
-                        if dx != 0 or dy != 0:
-                            draw.text((text_anchor_x + dx, slam_text_y + dy), text, 
-                                    font=scaled_font, fill=slam_outline, anchor="ms")
-            draw.text((text_anchor_x, slam_text_y), text, font=scaled_font, fill=slam_color, anchor="ms")
+        draw_text_with_outline(
+            draw, 
+            (text_anchor_x, slam_text_y), 
+            text,
+            scaled_font, 
+            slam_color, 
+            slam_outline, 
+            enhanced_outline_width, 
+            anchor="ms",
+            max_width=int(frame_width * 0.9)
+        )
         
         # Add impact dust/debris particles
         if shockwave_radius > 30:
