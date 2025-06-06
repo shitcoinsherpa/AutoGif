@@ -162,6 +162,10 @@ class WaveEffect(EffectBase):
         return "Wave"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 60
 
@@ -210,6 +214,10 @@ class WaveEffect(EffectBase):
         """
         Applies a wave effect where each letter moves up and down in a sine wave pattern.
         """
+        # Debug logging
+        if frame_width and frame_height and current_frame_index % 30 == 0:
+            print(f"[WAVE DEBUG] Rendering text: '{text}' (len={len(text)}, chars={[ord(c) for c in text]})")
+        
         if frame_image.mode != "RGBA":
             frame_image = frame_image.convert("RGBA")
         
@@ -226,7 +234,7 @@ class WaveEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -270,6 +278,11 @@ class WaveEffect(EffectBase):
         # Draw each line with wave effect
         for line_idx, line in enumerate(lines):
             line_y = start_y + line_idx * (line_height + 4)
+            
+            # Debug log for last character of line
+            if line and current_frame_index % 30 == 0:
+                last_char = line[-1] if line else ''
+                print(f"[WAVE DEBUG] Line {line_idx}: '{line}' - last char: '{last_char}' (ord={ord(last_char) if last_char else 0})")
             
             # Get line width to center it
             try:

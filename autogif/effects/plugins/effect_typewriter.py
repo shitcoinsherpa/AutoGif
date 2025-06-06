@@ -163,6 +163,10 @@ class TypewriterEffect(EffectBase):
         return "Typewriter"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 70
 
@@ -271,7 +275,7 @@ class TypewriterEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
             

@@ -162,6 +162,10 @@ class SlamEffect(EffectBase):
         return "Slam"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 75
 
@@ -208,7 +212,7 @@ class SlamEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -223,9 +227,13 @@ class SlamEffect(EffectBase):
         
         draw = ImageDraw.Draw(blank_canvas)
         
-        # Calculate slam animation progress
-        if current_frame_index < self.slam_frames:
-            slam_progress = current_frame_index / max(1, self.slam_frames)
+        # Calculate slam animation progress using time-based approach
+        # This allows word-level effects to work regardless of global frame index
+        frame_time = current_frame_index / max(1, self.fps)
+        slam_duration = self.slam_frames / max(1, self.fps)
+        
+        if frame_time < slam_duration:
+            slam_progress = frame_time / max(0.1, slam_duration)
             
             # Phase 1: Drop (first 60% of slam)
             if slam_progress < 0.6:
@@ -260,10 +268,52 @@ class SlamEffect(EffectBase):
                 else:
                     text_scale = 0.8 + ((impact_progress - 0.3) / 0.7) * 0.2  # Restore to normal
         else:
-            # Post-slam: text at rest
-            y_offset = 0
-            shockwave_radius = 0
-            text_scale = 1.0
+            # Create repeating slam cycles for word-level effects
+            # Add a pause between slams and repeat the animation
+            slam_cycle_duration = slam_duration + 2.0  # 2 second pause between slams
+            cycle_time = frame_time % slam_cycle_duration
+            
+            if cycle_time < slam_duration:
+                # We're in a slam cycle, recalculate progress
+                slam_progress = cycle_time / max(0.1, slam_duration)
+                
+                # Phase 1: Drop (first 60% of slam)
+                if slam_progress < 0.6:
+                    drop_progress = slam_progress / 0.6
+                    
+                    # Accelerating drop (gravity effect)
+                    gravity_factor = drop_progress * drop_progress  # Quadratic acceleration
+                    y_offset = -self.drop_height * (1.0 - gravity_factor)
+                    
+                    # No shockwave during drop
+                    shockwave_radius = 0
+                    text_scale = 1.0
+                    
+                # Phase 2: Impact and bounce (last 40% of slam)
+                else:
+                    impact_progress = (slam_progress - 0.6) / 0.4
+                    
+                    # Bounce effect with dampening
+                    bounce_cycles = 2  # Number of bounces
+                    bounce_value = math.sin(impact_progress * bounce_cycles * math.pi)
+                    bounce_height = self.drop_height * 0.3 * bounce_value * (1.0 - impact_progress)
+                    
+                    y_offset = -bounce_height * self.bounce_dampening
+                    
+                    # Shockwave expanding from impact
+                    shockwave_radius = impact_progress * self.max_shockwave_radius
+                    
+                    # Text compression on impact
+                    if impact_progress < 0.3:
+                        compression_factor = 1.0 - (impact_progress / 0.3) * 0.2  # Compress by 20%
+                        text_scale = compression_factor
+                    else:
+                        text_scale = 0.8 + ((impact_progress - 0.3) / 0.7) * 0.2  # Restore to normal
+            else:
+                # Between slam cycles: text at rest
+                y_offset = 0
+                shockwave_radius = 0
+                text_scale = 1.0
         
         # Draw shockwave rings
         if shockwave_radius > 10:
@@ -306,7 +356,7 @@ class SlamEffect(EffectBase):
         
         # Enhanced coloring during impact
         original_color = parse_color_to_pil_format(font_color)
-        if current_frame_index < self.slam_frames and shockwave_radius > 0:
+        if shockwave_radius > 0:
             # Make text more intense/red during impact
             if original_color.startswith('#'):
                 r = int(original_color[1:3], 16)
@@ -336,15 +386,16 @@ class SlamEffect(EffectBase):
             slam_color, 
             slam_outline, 
             enhanced_outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         
         # Add impact dust/debris particles
         if shockwave_radius > 30:
             import random
-            # Set seed for consistent particles
-            random.seed(hash(text) % 1000000 + current_frame_index // 2)
+            # Set seed for consistent particles based on time
+            time_seed = int(frame_time * 100) // 2  # Change every 0.02 seconds
+            random.seed(hash(text) % 1000000 + time_seed)
             
             num_particles = int(10 + (intensity / 100.0) * 20)
             for i in range(num_particles):

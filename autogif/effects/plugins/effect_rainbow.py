@@ -165,6 +165,10 @@ class RainbowEffect(EffectBase):
     def default_intensity(self) -> int:
         return 80
 
+    @property
+    def supports_word_level(self) -> bool:
+        return True
+
     def prepare(self, **kwargs) -> None:
         """No preparation needed for rainbow effect"""
         pass
@@ -227,7 +231,7 @@ class RainbowEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas

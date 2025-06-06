@@ -163,6 +163,10 @@ class BrushStrokeEffect(EffectBase):
         return "Brush Stroke"
 
     @property
+    def supports_word_level(self) -> bool:
+        return False
+
+    @property
     def default_intensity(self) -> int:
         return 75
 
@@ -272,7 +276,7 @@ class BrushStrokeEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -319,7 +323,7 @@ class BrushStrokeEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         

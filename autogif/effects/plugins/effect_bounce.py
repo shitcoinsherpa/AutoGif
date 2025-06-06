@@ -165,6 +165,10 @@ class BounceEffect(EffectBase):
     def default_intensity(self) -> int:
         return 60
 
+    @property
+    def supports_word_level(self) -> bool:
+        return True
+
     def prepare(self, target_fps: int, caption_natural_duration_sec: float, text_length: int, intensity: int = None, **kwargs) -> None:
         """Prepare simple whole-text bouncing animation"""
         if intensity is None:
@@ -205,7 +209,7 @@ class BounceEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -235,7 +239,7 @@ class BounceEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         

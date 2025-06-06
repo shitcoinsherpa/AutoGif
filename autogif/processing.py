@@ -929,12 +929,28 @@ def generate_gif(
                 active_caption_text_for_frame = caption['text']
                 break
         
-        if output_log_callback and output_gif_frame_idx % (output_fps * 2) == 0:  # Log every 2 seconds
-            effect_mode = "caption-based"
-            active_words_debug = [w["word"] for w in active_subtitles if w["start"] <= current_source_frame_time <= w["end"]]
-            output_log_callback(f"Frame {output_gif_frame_idx}: time={current_source_frame_time:.2f}s, mode={effect_mode}, active_words={active_words_debug}, text='{active_caption_text_for_frame[:30] if active_caption_text_for_frame else 'None'}...'")
+        # Find words active at this specific time for word-level effects
+        active_words_at_time = [
+            word for word in active_subtitles 
+            if word["start"] <= current_source_frame_time <= word["end"]
+        ]
         
-        if active_caption_text_for_frame:
+        if output_log_callback and output_gif_frame_idx % (output_fps * 2) == 0:  # Log every 2 seconds
+            # Determine rendering mode for logging
+            has_word_level_effects_enabled = any(
+                hasattr(effect_config["instance"], "supports_word_level") and effect_config["instance"].supports_word_level
+                for effect_config in text_effects_configs
+            )
+            has_explicit_word_effects = any(
+                word.get("word_effects", {}).get("effects") 
+                for word in active_words_at_time
+            )
+            effect_mode = "word-level" if (has_word_level_effects_enabled or has_explicit_word_effects) and active_caption else "caption-based"
+            
+            active_words_debug = [w["word"] for w in active_words_at_time]
+            output_log_callback(f"GIF Frame {output_gif_frame_idx}: time={current_source_frame_time:.2f}s, mode={effect_mode}, active_words={active_words_debug}, text='{active_caption_text_for_frame[:30] if active_caption_text_for_frame else 'None'}...'")
+        
+        if active_caption_text_for_frame or active_words_at_time:
             try:
                 # --- Text Rendering & Effects on a Separate Canvas --- 
                 text_canvas = Image.new("RGBA", (new_width, new_height), (0,0,0,0))
@@ -945,105 +961,151 @@ def generate_gif(
                 base_text_position_on_canvas = (int(initial_text_anchor_x), int(initial_text_anchor_y))
 
                 try: # Outer try for all text rendering and effects on canvas
-                    # Only skip normal text rendering for word-level effects (like typewriter)
-                    skip_normal_text = False
-                    word_level_effects = {"typewriter"}
-                    for effect_config_item in text_effects_configs:
-                        if effect_config_item["slug"] in word_level_effects:
-                            skip_normal_text = True
-                            break
+                    # Check if we should use word-level rendering
+                    has_word_level_effects_enabled = any(
+                        hasattr(effect_config["instance"], "supports_word_level") and effect_config["instance"].supports_word_level
+                        for effect_config in text_effects_configs
+                    )
                     
-                    # 1. Draw initial text (with outline) on text_canvas ONLY if no text-drawing effect is active
-                    if not skip_normal_text:
-                        draw_text_with_outline(
-                            draw_on_text_canvas, 
-                            base_text_position_on_canvas, 
-                            active_caption_text_for_frame,
-                            pil_font, 
-                            font_color, 
-                            outline_color_hex, 
-                            outline_width, 
-                            anchor="ms",
-                            max_width=int(new_width * 0.9)  # Allow text to use 90% of frame width
-                        )
-
-                    # 2. Apply active text effects to text_canvas
-                    current_canvas_for_effects = text_canvas 
-                    if text_effects_configs: 
-                        if output_log_callback and gif_frame_count % (output_fps * 5) == 0: 
-                            output_log_callback(f"Applying text effects to text canvas for frame {gif_frame_count}...")
+                    # Also check if any words have explicit word-level effects data (same as preview)
+                    has_explicit_word_effects = any(
+                        word.get("word_effects", {}).get("effects") 
+                        for word in active_words_at_time
+                    )
                     
-                    # For effects, we need to find which caption this frame belongs to for proper timing
-                    # active_caption is already set above based on effect type
+                    use_word_level_rendering = has_word_level_effects_enabled or has_explicit_word_effects
                     
-                    # Need to track when this caption started in the GIF frame sequence
-                    caption_start_gif_frame_for_effect = 0
-                    if active_caption:
-                        for prev_cap in captions:
-                            if prev_cap == active_caption:
-                                break
-                            # Calculate frames this previous caption would have used
-                            prev_cap_natural_frames = int((prev_cap['end_time'] - prev_cap['start_time']) * output_fps)
-                            caption_start_gif_frame_for_effect += prev_cap_natural_frames
-                    
-                    relative_frame_idx_for_caption_effect = max(0, output_gif_frame_idx - caption_start_gif_frame_for_effect)
-
-                    for effect_config_item in text_effects_configs:
-                        effect_instance = effect_config_item["instance"]
-                        effect_intensity = effect_config_item["intensity"]
-                        effect_slug = effect_config_item["slug"]
+                    if use_word_level_rendering and active_caption:
+                        # Use word-level rendering with complete caption words (same as preview)
+                        complete_caption_words = active_caption.get('words', [])
                         
-                        # Prepare the effect for this specific caption
-                        try:
-                            if active_caption:
-                                effect_instance.prepare(
-                                    target_fps=output_fps, 
-                                    caption_natural_duration_sec=active_caption['natural_duration_sec'], 
-                                    text_length=len(active_caption_text_for_frame),
-                                    intensity=effect_intensity # Pass intensity to prepare as well, if needed by effect
-                                )
-                            else:
-                                # No active caption, use default values
-                                effect_instance.prepare(
-                                    target_fps=output_fps, 
-                                    caption_natural_duration_sec=1.0, 
-                                    text_length=len(active_caption_text_for_frame),
-                                    intensity=effect_intensity
-                                )
-                        except Exception as e_prepare_dyn:
-                            if output_log_callback: output_log_callback(f"Error dynamically preparing effect {effect_slug}: {e_prepare_dyn}")
-                            continue # Skip this effect for this frame/caption
-
-                        try:
-                            # Ensure canvas is RGBA before passing to effect
-                            if current_canvas_for_effects.mode != "RGBA":
-                                current_canvas_for_effects = current_canvas_for_effects.convert("RGBA")
-                                
-                            transformed_canvas = effect_instance.transform(
-                                frame_image=current_canvas_for_effects.copy(), 
-                                text=active_caption_text_for_frame, 
-                                base_position=base_text_position_on_canvas, 
-                                current_frame_index=relative_frame_idx_for_caption_effect, # Use relative index
-                                intensity=effect_intensity,
-                                font=pil_font, font_color=font_color, 
-                                outline_color=outline_color_hex, outline_width=outline_width,
-                                frame_width=new_width, frame_height=new_height, 
-                                text_anchor_x=initial_text_anchor_x, 
-                                text_anchor_y=initial_text_anchor_y,
-                                # Pass caption_start_gif_frame_for_effect if effects need to know their global start on GIF
-                                caption_start_frame_for_gif=caption_start_gif_frame_for_effect,
-                                target_fps=output_fps  # For pulsing effects
+                        font_settings = {
+                            "font": pil_font,
+                            "font_color": font_color,
+                            "outline_color": outline_color_hex,
+                            "outline_width": outline_width
+                        }
+                        frame_settings = {
+                            "frame_width": new_width,
+                            "frame_height": new_height,
+                            "base_y": int(initial_text_anchor_y),
+                            "output_fps": output_fps
+                        }
+                        
+                        text_canvas = render_word_level_effects(
+                            complete_caption_words,
+                            text_effects_configs,
+                            text_canvas,
+                            font_settings,
+                            frame_settings,
+                            output_gif_frame_idx,
+                            output_log_callback
+                        )
+                    else:
+                        # Standard caption-level rendering
+                        # Only skip normal text rendering for certain effects (like typewriter)
+                        skip_normal_text = False
+                        word_level_effects = {"typewriter"}
+                        for effect_config_item in text_effects_configs:
+                            if effect_config_item["slug"] in word_level_effects:
+                                skip_normal_text = True
+                                break
+                        
+                        # 1. Draw initial text (with outline) on text_canvas ONLY if no text-drawing effect is active
+                        if not skip_normal_text and active_caption_text_for_frame:
+                            draw_text_with_outline(
+                                draw_on_text_canvas, 
+                                base_text_position_on_canvas, 
+                                active_caption_text_for_frame,
+                                pil_font, 
+                                font_color, 
+                                outline_color_hex, 
+                                outline_width, 
+                                anchor="ms",
+                                max_width=int(new_width * 0.9)  # Allow text to use 90% of frame width
                             )
-                            if transformed_canvas is not None and isinstance(transformed_canvas, Image.Image):
-                                # Ensure result is RGBA for consistent handling
-                                if transformed_canvas.mode != "RGBA":
-                                    transformed_canvas = transformed_canvas.convert("RGBA")
-                                current_canvas_for_effects = transformed_canvas
-                        except Exception as e_transform_canvas:
-                            if output_log_callback:
-                                output_log_callback(f"Error applying effect {effect_instance.display_name} to text canvas: {e_transform_canvas}")
-                    
-                    text_canvas = current_canvas_for_effects
+
+                        # 2. Apply caption-level text effects to text_canvas (only for non-word-level rendering)
+                        current_canvas_for_effects = text_canvas 
+                        if text_effects_configs and active_caption_text_for_frame: 
+                            if output_log_callback and gif_frame_count % (output_fps * 5) == 0: 
+                                output_log_callback(f"Applying caption-level text effects to text canvas for frame {gif_frame_count}...")
+                        
+                            # For effects, we need to find which caption this frame belongs to for proper timing
+                            # active_caption is already set above based on effect type
+                            
+                            # Need to track when this caption started in the GIF frame sequence
+                            caption_start_gif_frame_for_effect = 0
+                            if active_caption:
+                                for prev_cap in captions:
+                                    if prev_cap == active_caption:
+                                        break
+                                    # Calculate frames this previous caption would have used
+                                    prev_cap_natural_frames = int((prev_cap['end_time'] - prev_cap['start_time']) * output_fps)
+                                    caption_start_gif_frame_for_effect += prev_cap_natural_frames
+                            
+                            relative_frame_idx_for_caption_effect = max(0, output_gif_frame_idx - caption_start_gif_frame_for_effect)
+
+                            for effect_config_item in text_effects_configs:
+                                effect_instance = effect_config_item["instance"]
+                                effect_intensity = effect_config_item["intensity"]
+                                effect_slug = effect_config_item["slug"]
+                                
+                                # Skip word-level effects in caption-level rendering
+                                if hasattr(effect_instance, "supports_word_level") and effect_instance.supports_word_level:
+                                    continue
+                                
+                                # Prepare the effect for this specific caption
+                                try:
+                                    if active_caption:
+                                        effect_instance.prepare(
+                                            target_fps=output_fps, 
+                                            caption_natural_duration_sec=active_caption['natural_duration_sec'], 
+                                            text_length=len(active_caption_text_for_frame),
+                                            intensity=effect_intensity # Pass intensity to prepare as well, if needed by effect
+                                        )
+                                    else:
+                                        # No active caption, use default values
+                                        effect_instance.prepare(
+                                            target_fps=output_fps, 
+                                            caption_natural_duration_sec=1.0, 
+                                            text_length=len(active_caption_text_for_frame),
+                                            intensity=effect_intensity
+                                        )
+                                except Exception as e_prepare_dyn:
+                                    if output_log_callback: output_log_callback(f"Error dynamically preparing effect {effect_slug}: {e_prepare_dyn}")
+                                    continue # Skip this effect for this frame/caption
+
+                                try:
+                                    # Ensure canvas is RGBA before passing to effect
+                                    if current_canvas_for_effects.mode != "RGBA":
+                                        current_canvas_for_effects = current_canvas_for_effects.convert("RGBA")
+                                        
+                                    transformed_canvas = effect_instance.transform(
+                                        frame_image=current_canvas_for_effects.copy(), 
+                                        text=active_caption_text_for_frame, 
+                                        base_position=base_text_position_on_canvas, 
+                                        current_frame_index=relative_frame_idx_for_caption_effect, # Use relative index
+                                        intensity=effect_intensity,
+                                        font=pil_font, font_color=font_color, 
+                                        outline_color=outline_color_hex, outline_width=outline_width,
+                                        frame_width=new_width, frame_height=new_height, 
+                                        text_anchor_x=initial_text_anchor_x, 
+                                        text_anchor_y=initial_text_anchor_y,
+                                        # Pass caption_start_gif_frame_for_effect if effects need to know their global start on GIF
+                                        caption_start_frame_for_gif=caption_start_gif_frame_for_effect,
+                                        target_fps=output_fps  # For pulsing effects
+                                    )
+                                    if transformed_canvas is not None and isinstance(transformed_canvas, Image.Image):
+                                        # Ensure result is RGBA for consistent handling
+                                        if transformed_canvas.mode != "RGBA":
+                                            transformed_canvas = transformed_canvas.convert("RGBA")
+                                        current_canvas_for_effects = transformed_canvas
+                                except Exception as e_transform_canvas:
+                                    if output_log_callback:
+                                        output_log_callback(f"Error applying effect {effect_instance.display_name} to text canvas: {e_transform_canvas}")
+                            
+                            text_canvas = current_canvas_for_effects
 
                     # 3. Calculate bounding box and determine y_offset for text_canvas
                     y_offset_for_compositing = 0
@@ -1360,8 +1422,14 @@ def render_preview_video(
                 active_caption = caption
                 active_caption_text_for_frame = caption['text']
                 break
+        # Find words active at this specific time for word-level effects (preview)
+        active_words_at_time = [
+            word for word in subtitles_data 
+            if word["start"] <= current_source_frame_time <= word["end"]
+        ]
+        
         # Text & Effects rendering (using the separate canvas method from generate_gif)
-        if active_caption_text_for_frame:
+        if active_caption_text_for_frame or active_words_at_time:
             text_canvas = Image.new("RGBA", (new_width, new_height), (0,0,0,0))
             draw_on_text_canvas = ImageDraw.Draw(text_canvas)
             initial_text_anchor_x = new_width / 2
@@ -1369,13 +1437,59 @@ def render_preview_video(
             base_text_position_on_canvas = (int(initial_text_anchor_x), int(initial_text_anchor_y))
 
             try: # Text drawing and effects on canvas
-                # Only skip normal text rendering for word-level effects (like typewriter)
+                # Initialize skip_normal_text early to avoid scope issues
                 skip_normal_text = False
-                word_level_effects = {"typewriter"}
-                for effect_config_item in text_effects_configs:
-                    if effect_config_item["slug"] in word_level_effects:
-                        skip_normal_text = True
-                        break
+                
+                # Check if we should use word-level rendering for preview
+                # Use same logic as GIF rendering: check if word-level effects are enabled globally
+                has_word_level_effects_enabled = any(
+                    hasattr(effect_config["instance"], "supports_word_level") and effect_config["instance"].supports_word_level
+                    for effect_config in text_effects_configs
+                )
+                
+                # Also check if any words have explicit word-level effects data
+                has_explicit_word_effects = any(
+                    word.get("word_effects", {}).get("effects") 
+                    for word in active_words_at_time
+                )
+                
+                use_word_level_rendering = has_word_level_effects_enabled or has_explicit_word_effects
+                
+                if use_word_level_rendering and active_caption:
+                    # Use word-level rendering for preview with complete caption words
+                    skip_normal_text = True  # Word-level effects handle their own text rendering
+                    complete_caption_words = active_caption.get('words', [])
+                    
+                    font_settings = {
+                        "font": pil_font,
+                        "font_color": font_color,
+                        "outline_color": outline_color_hex,
+                        "outline_width": outline_width
+                    }
+                    frame_settings = {
+                        "frame_width": new_width,
+                        "frame_height": new_height,
+                        "base_y": int(initial_text_anchor_y),
+                        "output_fps": output_fps
+                    }
+                    
+                    text_canvas = render_word_level_effects(
+                        complete_caption_words,
+                        text_effects_configs,
+                        text_canvas,
+                        font_settings,
+                        frame_settings,
+                        preview_frame_count,
+                        output_log_callback
+                    )
+                else:
+                    # Standard caption-level rendering for preview
+                    # Only skip normal text rendering for certain effects (like typewriter)
+                    word_level_effects = {"typewriter"}
+                    for effect_config_item in text_effects_configs:
+                        if effect_config_item["slug"] in word_level_effects:
+                            skip_normal_text = True
+                            break
                 
                 # Use the fixed text drawing helper ONLY if no text-drawing effect is active
                 if not skip_normal_text:
@@ -1407,8 +1521,13 @@ def render_preview_video(
                 
                 relative_frame_idx = max(0, preview_frame_count - caption_start_preview_frame)
                 
+                # Apply caption-level text effects (skip word-level effects)
                 for effect_config_item in text_effects_configs:
                     inst, intensity_val = effect_config_item["instance"], effect_config_item["intensity"]
+                    
+                    # Skip word-level effects in caption-level rendering (preview)
+                    if hasattr(inst, "supports_word_level") and inst.supports_word_level:
+                        continue
                     
                     # Prepare effect for this caption with all required parameters - MATCH GIF LOGIC
                     try:
@@ -1462,8 +1581,8 @@ def render_preview_video(
                     except Exception as e_trans:
                         if output_log_callback:
                             output_log_callback(f"Warning: Error applying effect {inst.display_name} for preview: {e_trans}")
-                
-                text_canvas = current_canvas_for_effects
+                    
+                    text_canvas = current_canvas_for_effects
 
                 # Calculate bounding box and y_offset
                 y_offset_for_compositing = 0
@@ -1594,6 +1713,354 @@ def render_preview_video(
         return preview_video_filepath, preview_frame_count
     else:
         return None, 0
+
+def render_word_level_effects(caption_words, text_effects_configs, text_canvas, font_settings, frame_settings, current_frame_index, output_log_callback=None):
+    """
+    Render complete caption with word-level effects applied to specific words.
+    
+    Args:
+        caption_words: List of all word dictionaries in the complete caption
+        text_effects_configs: List of enabled text effect configurations
+        text_canvas: PIL Image canvas to draw on
+        font_settings: Dictionary with font, color, and outline settings
+        frame_settings: Dictionary with frame dimensions and positioning
+        current_frame_index: Current frame index for effect animation
+        output_log_callback: Logging function
+    
+    Returns:
+        Modified text_canvas with word-level effects applied
+    """
+    if not caption_words:
+        return text_canvas
+    
+    from PIL import Image, ImageDraw
+    
+    # Extract settings
+    pil_font = font_settings["font"]
+    default_font_color = font_settings["font_color"]
+    outline_color = font_settings["outline_color"]
+    outline_width = font_settings["outline_width"]
+    
+    frame_width = frame_settings["frame_width"]
+    frame_height = frame_settings["frame_height"]
+    base_y = frame_settings["base_y"]
+    
+    # Check if any word-level effects are enabled globally in the config
+    has_word_level_effects_enabled = any(
+        hasattr(effect_config["instance"], "supports_word_level") and effect_config["instance"].supports_word_level
+        for effect_config in text_effects_configs
+    )
+    
+    # Also check if any words have explicit word-level effects data
+    has_explicit_word_effects = any(
+        word.get("word_effects", {}).get("effects") 
+        for word in caption_words
+    )
+    
+    # Use word-level rendering if either condition is true
+    use_word_level_rendering = has_word_level_effects_enabled or has_explicit_word_effects
+    
+    if not use_word_level_rendering:
+        # No word-level effects, render as normal caption
+        full_text = " ".join(word["word"] for word in caption_words)
+        draw_text_with_outline(
+            ImageDraw.Draw(text_canvas),
+            (frame_width // 2, base_y),
+            full_text,
+            pil_font,
+            default_font_color,
+            outline_color,
+            outline_width,
+            anchor="ms",
+            max_width=int(frame_width * 0.9)
+        )
+        return text_canvas
+    
+    # Create the full text to calculate positioning
+    full_text = " ".join(word["word"] for word in caption_words)
+    
+    # Debug logging to identify extra characters
+    if output_log_callback and current_frame_index % 30 == 0:
+        output_log_callback(f"[DEBUG] Full caption text: '{full_text}'")
+        output_log_callback(f"[DEBUG] Caption has {len(caption_words)} words:")
+        for i, word in enumerate(caption_words):
+            word_text = word["word"]
+            output_log_callback(f"[DEBUG]   Word {i}: '{word_text}' (len={len(word_text)}, chars={[ord(c) for c in word_text]})")
+    
+    # Get text dimensions for positioning
+    temp_draw = ImageDraw.Draw(text_canvas)
+    try:
+        bbox = temp_draw.textbbox((0, 0), "Ay", font=pil_font)  # Use standard text height
+        text_height = bbox[3] - bbox[1]
+    except AttributeError:
+        # Fallback for older PIL versions
+        text_height = temp_draw.textsize("Ay", font=pil_font)[1]
+    
+    # Find the active word-level effect (only use the first one)
+    active_word_effect = None
+    active_word_effect_intensity = 0
+    for effect_config in text_effects_configs:
+        if hasattr(effect_config["instance"], "supports_word_level") and effect_config["instance"].supports_word_level:
+            active_word_effect = effect_config["instance"]
+            active_word_effect_intensity = effect_config["intensity"]
+            break
+    
+    # Calculate effect padding (shake effects need extra space)
+    effect_padding = 8 if active_word_effect and active_word_effect.slug == "shake" else 5
+    max_line_width = int(frame_width * 0.9) - (effect_padding * 2)  # Leave padding on both sides
+    
+    # Group words into lines based on available width
+    lines = []
+    current_line = []
+    current_line_width = 0
+    
+    for word_data in caption_words:
+        word_text = word_data["word"]
+        
+        # Get word dimensions
+        try:
+            word_bbox = temp_draw.textbbox((0, 0), word_text, font=pil_font)
+            word_width = word_bbox[2] - word_bbox[0]
+        except AttributeError:
+            word_width = temp_draw.textsize(word_text, font=pil_font)[0]
+        
+        # Get space width
+        try:
+            space_width = temp_draw.textbbox((0, 0), " ", font=pil_font)[2]
+        except AttributeError:
+            space_width = temp_draw.textsize(" ", font=pil_font)[0]
+        
+        # Check if adding this word would exceed line width
+        test_width = current_line_width + (space_width if current_line else 0) + word_width
+        
+        if test_width <= max_line_width or not current_line:  # Always add first word even if it's too wide
+            current_line.append(word_data)
+            current_line_width = test_width
+        else:
+            # Start new line
+            if current_line:
+                lines.append(current_line)
+            current_line = [word_data]
+            current_line_width = word_width
+    
+    # Add the last line
+    if current_line:
+        lines.append(current_line)
+    
+    # Calculate total text block height with proper line spacing
+    line_spacing = 8  # Increased spacing for better readability with effects
+    total_text_height = len(lines) * text_height + (len(lines) - 1) * line_spacing
+    
+    # Start with the original bottom positioning intent (base_y is typically 90% of frame height)
+    # Only adjust if shake effects would cause text to overflow beyond frame bounds
+    text_block_center_y = base_y
+    
+    # Calculate where the text block would be positioned
+    text_block_top = text_block_center_y - total_text_height // 2
+    text_block_bottom = text_block_center_y + total_text_height // 2
+    
+    # Apply safety adjustments only if needed (for shake effects that could overflow)
+    if active_word_effect and active_word_effect.slug == "shake":
+        # For shake effects, ensure text doesn't go outside safe bounds
+        safe_top = effect_padding + text_height // 2
+        safe_bottom = frame_height - effect_padding - text_height // 2
+        
+        # Only move text up if it would overflow at the bottom
+        if text_block_bottom > safe_bottom:
+            # Move the entire text block up to fit within safe bounds
+            text_block_center_y = safe_bottom - total_text_height // 2
+            
+        # Don't let text go above safe top either
+        if text_block_center_y - total_text_height // 2 < safe_top:
+            text_block_center_y = safe_top + total_text_height // 2
+    
+    # Calculate final text block starting Y position
+    text_block_start_y = text_block_center_y - total_text_height // 2
+    
+    # Render each line
+    for line_index, line_words in enumerate(lines):
+        # Calculate line width for centering
+        line_width = 0
+        for i, word_data in enumerate(line_words):
+            word_text = word_data["word"]
+            try:
+                word_bbox = temp_draw.textbbox((0, 0), word_text, font=pil_font)
+                word_w = word_bbox[2] - word_bbox[0]
+            except AttributeError:
+                word_w = temp_draw.textsize(word_text, font=pil_font)[0]
+            
+            line_width += word_w
+            if i < len(line_words) - 1:  # Add space except after last word
+                try:
+                    space_w = temp_draw.textbbox((0, 0), " ", font=pil_font)[2]
+                except AttributeError:
+                    space_w = temp_draw.textsize(" ", font=pil_font)[0]
+                line_width += space_w
+        
+        # Calculate starting X position for this line (centered)
+        line_start_x = (frame_width - line_width) // 2
+        current_x = line_start_x
+        
+        # Calculate Y position for this line
+        line_y = text_block_start_y + line_index * (text_height + line_spacing)
+        
+        # Apply basic bounds checking to keep lines within frame
+        line_y = max(text_height // 2, min(line_y, frame_height - text_height // 2))
+        
+        # Render each word in this line
+        for word_index, word_data in enumerate(line_words):
+            word_text = word_data["word"]
+            
+            # Get word dimensions for positioning
+            try:
+                word_bbox = temp_draw.textbbox((0, 0), word_text, font=pil_font)
+                word_width = word_bbox[2] - word_bbox[0]
+            except AttributeError:
+                word_width = temp_draw.textsize(word_text, font=pil_font)[0]
+            
+            # Determine if this word should have effects and get per-word settings
+            word_should_have_effects = False
+            word_specific_color = None
+            
+            if active_word_effect:
+                word_effects = word_data.get("word_effects", {})
+                word_effect_settings = word_effects.get("effects", {})
+                
+                # Always check for custom color first, regardless of effect state
+                word_specific_color = word_effects.get(f"{active_word_effect.slug}_color")
+                
+                if word_effect_settings:
+                    # Word has explicit settings - use them
+                    word_should_have_effects = word_effect_settings.get(active_word_effect.slug, False)
+                    if output_log_callback and current_frame_index % 60 == 0:  # Log occasionally
+                        output_log_callback(f"Word '{word_text}' explicit settings: {active_word_effect.slug}={word_should_have_effects}, color={word_specific_color}")
+                else:
+                    # Word has no explicit settings - apply global word-level effects by default
+                    # This allows the initial workflow: enable globally, then selectively disable
+                    global_word_effects_enabled = any(
+                        hasattr(config["instance"], "supports_word_level") and config["instance"].supports_word_level
+                        for config in text_effects_configs
+                    )
+                    word_should_have_effects = global_word_effects_enabled
+                    if output_log_callback and current_frame_index % 60 == 0:  # Log occasionally
+                        output_log_callback(f"Word '{word_text}' using global settings: {word_should_have_effects}, color={word_specific_color}")
+            
+            # Calculate word position (center of word)
+            word_position = (current_x + word_width // 2, line_y)
+            
+            # Apply basic safety bounds for individual words (simpler approach)
+            safe_x = max(word_width // 2, min(word_position[0], frame_width - word_width // 2))
+            safe_y = max(text_height // 2, min(word_position[1], frame_height - text_height // 2))
+            word_position = (safe_x, safe_y)
+            
+            if word_should_have_effects and active_word_effect:
+                # Create individual canvas for this word with effect
+                word_canvas = Image.new("RGBA", (frame_width, frame_height), (0, 0, 0, 0))
+                
+                # Use word-specific color if available, otherwise use default
+                word_font_color = word_specific_color if word_specific_color else default_font_color
+                
+                try:
+                    # Prepare effect for this word
+                    active_word_effect.prepare(
+                        target_fps=frame_settings.get("output_fps", 12),
+                        caption_natural_duration_sec=2.0,
+                        text_length=len(word_text),
+                        intensity=active_word_effect_intensity
+                    )
+                    
+                    # Apply effect to this word
+                    word_canvas = active_word_effect.transform(
+                        frame_image=word_canvas,
+                        text=word_text,
+                        base_position=word_position,
+                        current_frame_index=current_frame_index,
+                        intensity=active_word_effect_intensity,
+                        font=pil_font,
+                        font_color=word_font_color,
+                        outline_color=outline_color,
+                        outline_width=outline_width,
+                        text_anchor_x=word_position[0],
+                        text_anchor_y=word_position[1],
+                        frame_width=frame_width,
+                        frame_height=frame_height,
+                        target_fps=frame_settings.get("output_fps", 12)
+                    )
+                    
+                    # Composite this word onto the main canvas
+                    text_canvas.alpha_composite(word_canvas)
+                    
+                except Exception as e:
+                    if output_log_callback:
+                        output_log_callback(f"Error applying effect to word '{word_text}': {e}")
+                    # Fallback: render word normally with word-specific color
+                    draw_text_with_outline(
+                        ImageDraw.Draw(text_canvas),
+                        word_position,
+                        word_text,
+                        pil_font,
+                        word_font_color,
+                        outline_color,
+                        outline_width,
+                        anchor="mm"
+                    )
+            else:
+                # Check if word has custom color even without effects
+                word_font_color = word_specific_color if word_specific_color else default_font_color
+                
+                # Render word normally without effects but with custom color if specified
+                draw_text_with_outline(
+                    ImageDraw.Draw(text_canvas),
+                    word_position,
+                    word_text,
+                    pil_font,
+                    word_font_color,
+                    outline_color,
+                    outline_width,
+                    anchor="mm"
+                )
+            
+            # Move to next word position (add space)
+            current_x += word_width
+            if word_index < len(line_words) - 1:  # Add space except after last word in line
+                try:
+                    space_width = temp_draw.textbbox((0, 0), " ", font=pil_font)[2]
+                except AttributeError:
+                    space_width = temp_draw.textsize(" ", font=pil_font)[0]
+                current_x += space_width
+    
+    # Debug logging
+    if output_log_callback and current_frame_index % 30 == 0:
+        words_with_effects = []
+        words_with_custom_colors = []
+        
+        for word in caption_words:
+            word_effects = word.get("word_effects", {})
+            word_effect_settings = word_effects.get("effects", {})
+            
+            if active_word_effect:
+                if word_effect_settings:
+                    # Word has explicit settings - use them
+                    if word_effect_settings.get(active_word_effect.slug, False):
+                        words_with_effects.append(word["word"])
+                    if word_effect_settings.get(f"{active_word_effect.slug}_color"):
+                        words_with_custom_colors.append(word["word"])
+                else:
+                    # Word has no explicit settings - apply global word-level effects by default
+                    global_word_effects_enabled = any(
+                        hasattr(config["instance"], "supports_word_level") and config["instance"].supports_word_level
+                        for config in text_effects_configs
+                    )
+                    if global_word_effects_enabled:
+                        words_with_effects.append(word["word"])
+        
+        if active_word_effect:
+            effect_info = f"Word-level rendering: '{full_text}' - effect '{active_word_effect.slug}' applied to: {words_with_effects}"
+            if words_with_custom_colors:
+                effect_info += f" | Custom colors on: {words_with_custom_colors}"
+            output_log_callback(effect_info)
+    
+    return text_canvas
 
 # Example usage (for testing, not part of the final app flow directly here)
 if __name__ == '__main__':

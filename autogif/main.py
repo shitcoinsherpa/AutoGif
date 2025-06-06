@@ -59,6 +59,135 @@ def calculate_frame_range_for_subtitles(subtitles_data: list[dict], output_fps: 
     
     return start_frame, end_frame
 
+def get_enabled_word_level_effects(effect_components_list):
+    """Get a list of word-level effects that are currently enabled."""
+    enabled_word_effects = []
+    
+    # The effect_components_list contains pairs of (enable_checkbox, intensity_slider)
+    # for each effect in AVAILABLE_EFFECTS order
+    for i in range(len(AVAILABLE_EFFECTS)):
+        effect_plugin = AVAILABLE_EFFECTS[i]
+        if hasattr(effect_plugin, 'supports_word_level') and effect_plugin.supports_word_level:
+            # Get the current value of the enable checkbox
+            enable_idx = i * 2  # Each effect has enable + intensity = 2 components
+            if enable_idx < len(effect_components_list):
+                enable_component = effect_components_list[enable_idx]
+                # Note: We can't directly check component values here since this runs at setup
+                # We'll need to handle this in the event handlers
+                enabled_word_effects.append(effect_plugin)
+    
+    return enabled_word_effects
+
+def generate_dynamic_dataframe_columns(*effect_args):
+    """Generate DataFrame columns based on enabled word-level effects."""
+    base_columns = ["Word", "Start (s)", "End (s)"]
+    base_datatypes = ["str", "number", "number"]
+    
+    # Check which word-level effects are enabled
+    enabled_word_effects = []
+    num_effects = len(AVAILABLE_EFFECTS)
+    
+    if len(effect_args) >= num_effects * 2:
+        for i in range(num_effects):
+            effect_plugin = AVAILABLE_EFFECTS[i]
+            enable_idx = i * 2
+            is_enabled = effect_args[enable_idx] if enable_idx < len(effect_args) else False
+            
+            if (hasattr(effect_plugin, 'supports_word_level') and 
+                effect_plugin.supports_word_level and is_enabled):
+                enabled_word_effects.append(effect_plugin)
+    
+    # Add columns for each enabled word-level effect
+    dynamic_columns = base_columns.copy()
+    dynamic_datatypes = base_datatypes.copy()
+    
+    for effect in enabled_word_effects:
+        column_name = f"{effect.display_name}"
+        dynamic_columns.append(column_name)
+        dynamic_datatypes.append("bool")  # Checkbox for enabling effect on this word
+    
+    # Add word color column if any word-level effects are enabled
+    if enabled_word_effects:
+        dynamic_columns.append("Word Color")
+        dynamic_datatypes.append("str")  # Color picker
+    
+    return dynamic_columns, dynamic_datatypes
+
+
+
+def get_active_word_level_effect(enabled_effect_args):
+    """Get the currently active word-level effect (only one can be active at a time)."""
+    if not enabled_effect_args or len(enabled_effect_args) < len(AVAILABLE_EFFECTS) * 2:
+        return None
+    
+    for i in range(len(AVAILABLE_EFFECTS)):
+        effect_plugin = AVAILABLE_EFFECTS[i]
+        enable_idx = i * 2
+        is_enabled = enabled_effect_args[enable_idx] if enable_idx < len(enabled_effect_args) else False
+        
+        if (hasattr(effect_plugin, 'supports_word_level') and 
+            effect_plugin.supports_word_level and is_enabled):
+            return effect_plugin
+    
+    return None
+
+def update_word_level_controls(word_data, enabled_effect_args, word_control_rows, word_effects_section, active_effect_display, current_font_color=None, skip_colors=False):
+    """Update the word-level control components based on current data and active effect."""
+    
+    active_effect = get_active_word_level_effect(enabled_effect_args)
+    
+    # Prepare updates for all UI components
+    updates = {}
+    
+    if not active_effect or not word_data:
+        # Hide the entire word effects section
+        updates[word_effects_section] = gr.update(visible=False)
+        return updates
+    
+    # Show the word effects section and set the active effect
+    updates[word_effects_section] = gr.update(visible=True)
+    updates[active_effect_display] = gr.update(value=f"**Active Effect:** {active_effect.display_name}")
+    
+    # Use current font color if provided, otherwise fall back to saved settings
+    default_color = current_font_color if current_font_color else APP_SETTINGS.typography.font_color_hex
+    
+    # Update word control rows
+    for i, control_row in enumerate(word_control_rows):
+        if i < len(word_data):
+            # Show this row and populate with word data
+            word = word_data[i]
+            updates[control_row["row"]] = gr.update(visible=True)
+            updates[control_row["label"]] = gr.update(value=f"**{word['word']}** ({word['start']:.2f}s - {word['end']:.2f}s)")
+            updates[control_row["checkbox"]] = gr.update(value=True)  # Default to enabled
+            
+            # Only update color if not skipping (to preserve user selections)
+            if not skip_colors:
+                # Check if word has existing color data
+                if "word_effects" in word and f"{active_effect.slug}_color" in word["word_effects"]:
+                    # Use the existing custom color
+                    existing_color = word["word_effects"][f"{active_effect.slug}_color"]
+                    updates[control_row["color"]] = gr.update(value=existing_color)
+                else:
+                    # Use default color for new words
+                    updates[control_row["color"]] = gr.update(value=default_color)
+            else:
+                # Return empty update to maintain order
+                updates[control_row["color"]] = gr.update()
+        else:
+            # Hide unused rows
+            updates[control_row["row"]] = gr.update(visible=False)
+    
+    return updates
+
+def create_enhanced_subtitle_dataframe(word_data, enabled_effect_args=None):
+    """Create basic DataFrame for word timing data only."""
+    if not word_data:
+        return pd.DataFrame(columns=["Word", "Start (s)", "End (s)"])
+    
+    df = pd.DataFrame(word_data)
+    df.columns = ["Word", "Start (s)", "End (s)"]
+    return df
+
 # --- Load User Settings & Initialize --- 
 APP_SETTINGS = user_settings.load_user_settings()
 # Call the local load_effects function, passing the correct path from config
@@ -168,6 +297,7 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             regenerate_preview_button = gr.Button("Regenerate Preview with Edited Subtitles", visible=False)
 
             gr.Markdown("### Subtitle Table")
+            # Basic DataFrame for word text and timing only
             subtitles_df = gr.DataFrame(
                 headers=["Word", "Start (s)", "End (s)"],
                 datatype=["str", "number", "number"],
@@ -175,6 +305,30 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
                 interactive=True, 
                 row_count=(0, "dynamic")
             )
+            
+            # Word-level effect controls (shown only when a word-level effect is enabled)
+            with gr.Column(visible=False) as word_effects_section:
+                active_effect_display = gr.Markdown("**Active Effect:** None")
+                
+                # Collapsible accordion for word-level controls to save space
+                with gr.Accordion("🎯 Per-Word Effect Control (Click to expand)", open=False) as word_accordion:
+                    gr.Markdown("**Default:** All words use the global effect. Uncheck specific words to remove effects from them.")
+                    
+                    # Pre-create controls for up to 100 words (handle longer GIFs)
+                    word_control_rows = []
+                    for i in range(100):
+                        with gr.Row(visible=False) as word_row:
+                            word_label = gr.Markdown("")
+                            word_checkbox = gr.Checkbox(label="Enable", value=True, interactive=True)
+                            word_color = gr.ColorPicker(label="Color", value=APP_SETTINGS.typography.font_color_hex, interactive=True)
+                            word_control_rows.append({
+                                "row": word_row,
+                                "label": word_label,
+                                "checkbox": word_checkbox,
+                                "color": word_color
+                            })
+                    
+                    gr.Markdown("💡 **Tip:** Uncheck words like 'the', 'a', 'was' to only apply effects to important words!")
 
         with gr.Column(scale=1): # Right column for log, preview, and GIF controls
             gr.Markdown("## Build Log")
@@ -253,9 +407,12 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
                 if cleaned_message: log_messages.append(cleaned_message)
 
         log_to_gradio("Fetch, Transcribe & Preview process started. Settings saved.")
+        # Prepare initial state with word-level controls hidden
+        initial_word_control_updates = update_word_level_controls([], effect_args_preview, word_control_rows, word_effects_section, active_effect_display)
+        
         initial_ui_state = {
             log_output: "\n".join(log_messages),
-            subtitles_df: pd.DataFrame(columns=["Word", "Start (s)", "End (s)"]),
+            subtitles_df: create_enhanced_subtitle_dataframe([], effect_args_preview),
             current_video_file_path_state: None,
             styled_preview_video: None,
             gif_start_frame_input: gr.update(interactive=False, value=0, maximum=0),
@@ -266,6 +423,9 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             total_frames_in_preview_state: 0,
             current_subtitles_data_state: []
         }
+        
+        # Add word control updates to initial state
+        initial_ui_state.update(initial_word_control_updates)
 
         if not url or not url.startswith("http"): 
             log_to_gradio("Error: Please enter a valid YouTube URL.")
@@ -293,8 +453,8 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             initial_ui_state[log_output] = "\n".join(log_messages)
             return initial_ui_state
 
-        subtitles_df_result = pd.DataFrame(word_data)
-        subtitles_df_result.columns = ["Word", "Start (s)", "End (s)"]
+        # Create enhanced DataFrame with dynamic columns based on enabled word-level effects
+        subtitles_df_result = create_enhanced_subtitle_dataframe(word_data, effect_args_preview)
         log_to_gradio("Transcription successful. Proceeding to render styled preview...")
 
         # CRITICAL FIX: Calculate proper frame range based on subtitle data
@@ -357,7 +517,22 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
         padding_buffer = int(end_frame * 0.5)  # 50% padding allowance
         max_frame = end_frame + padding_buffer
 
-        return {
+        # Apply default word-level effects for initial preview
+        if word_data:
+            active_effect = get_active_word_level_effect(effect_args_preview)
+            if active_effect:
+                # For initial preview, apply the global word-level effect to all words by default
+                for i, word_entry in enumerate(word_data):
+                    word_entry["word_effects"] = {
+                        "effects": {active_effect.slug: True},
+                        f"{active_effect.slug}_color": font_color_hex  # Use current UI color, not APP_SETTINGS
+                    }
+
+        # Prepare word-level control updates
+        word_control_updates = update_word_level_controls(word_data, effect_args_preview, word_control_rows, word_effects_section, active_effect_display, font_color_hex, skip_colors=False)
+        
+        # Combine all updates
+        all_updates = {
             log_output: "\n".join(log_messages),
             subtitles_df: subtitles_df_result,
             current_video_file_path_state: original_video_segment_path,
@@ -370,14 +545,24 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             total_frames_in_preview_state: total_preview_frames,
             current_subtitles_data_state: word_data
         }
+        
+        # Add word control updates
+        all_updates.update(word_control_updates)
+        
+        return all_updates
 
     # --- Handler for Regenerating Preview with Edited Subtitles ---
     def handle_regenerate_preview(original_video_path, edited_subtitles_df, 
                                   fps_val, resolution_choice, 
                                   font_family_val, font_size_str, font_color_hex, 
                                   outline_color_hex_val, outline_width_val,
-                                  *effect_args_regen,
+                                  *all_args,
                                   progress=gr.Progress(track_tqdm=True)):
+        
+        # Split the arguments: first part is effect args, rest are word control values
+        num_effect_args = len(AVAILABLE_EFFECTS) * 2
+        effect_args_regen = all_args[:num_effect_args]
+        word_control_values = all_args[num_effect_args:]  # checkbox, color pairs for each word
         
         log_messages = []
         def log_to_gradio(message):
@@ -417,12 +602,70 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
 
         word_data = []
         try:
+            active_effect = get_active_word_level_effect(effect_args_regen)
+            
             for _, row in edited_subtitles_df.iterrows():
-                word_data.append({
+                word_entry = {
                     "word": str(row["Word"]), 
                     "start": float(row["Start (s)"]), 
                     "end": float(row["End (s)"])
-                })
+                }
+                
+                # Only apply word-level effects to words that have been explicitly configured
+                # Don't automatically apply to all words when regenerating
+                # (Word effects should only be applied when explicitly set via word controls)
+                
+                word_data.append(word_entry)
+            
+            # Apply word control settings using actual checkbox and color values
+            if word_data:
+                active_effect = get_active_word_level_effect(effect_args_regen)
+                if active_effect:
+                    log_to_gradio(f"Processing {len(word_data)} words with {len(word_control_values)} control values for effect '{active_effect.slug}'")
+                    # Parse word control values (checkbox, color pairs)
+                    for i, word_entry in enumerate(word_data):
+                        # Each word has 2 control values: checkbox (bool) and color (str)
+                        checkbox_index = i * 2
+                        color_index = i * 2 + 1
+                        
+                        if checkbox_index < len(word_control_values) and color_index < len(word_control_values):
+                            word_enabled = word_control_values[checkbox_index]  # True/False from checkbox
+                            word_color = word_control_values[color_index]        # Color string from color picker
+                            log_to_gradio(f"Word '{word_entry['word']}' (index {i}): checkbox={word_enabled}, color={word_color}")
+                            
+                            # Check if the word color is different from the global color
+                            # If it's the same or appears to be a default gray, use the current global color
+                            use_global_color = False
+                            try:
+                                # Parse word color to check if it's default/gray
+                                word_color_parsed = word_color.replace("rgba(", "").replace(")", "").split(",")
+                                if len(word_color_parsed) >= 3:
+                                    r, g, b = float(word_color_parsed[0]), float(word_color_parsed[1]), float(word_color_parsed[2])
+                                    # If all RGB values are close to gray (240-255 range), use global color instead
+                                    if 240 <= r <= 255 and 240 <= g <= 255 and 240 <= b <= 255:
+                                        use_global_color = True
+                            except:
+                                use_global_color = True
+                            
+                            # Use global color if word color appears to be default, otherwise use word color
+                            final_color = font_color_hex if use_global_color else word_color
+                            
+                            # Always create word_effects structure, but set enabled based on checkbox
+                            word_entry["word_effects"] = {
+                                "effects": {active_effect.slug: word_enabled},  # True or False based on checkbox
+                                f"{active_effect.slug}_color": final_color
+                            }
+                            
+                            if word_enabled:
+                                log_to_gradio(f"Applied {active_effect.slug} to '{word_entry['word']}' with color {final_color}")
+                            else:
+                                log_to_gradio(f"Disabled {active_effect.slug} for '{word_entry['word']}'")
+                        else:
+                            # If no control values available, use global settings
+                            word_entry["word_effects"] = {
+                                "effects": {active_effect.slug: True},  # Default to enabled when no controls
+                                f"{active_effect.slug}_color": font_color_hex  # Use current global color
+                            }
         except Exception as e:
             log_to_gradio(f"Error processing edited subtitles: {e}")
             return (
@@ -560,23 +803,29 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
             log_to_gradio("Error: No original video file available. Please Fetch & Transcribe first.")
             return "\n".join(log_messages), None, gr.update(visible=False)
 
-        # CRITICAL FIX: Use subtitle data from state for frame range validation
+        # Process subtitle data - CRITICAL: Use stored data with word effects, not DataFrame
         subtitles_data = []
-        if subtitles_input_df is not None and not subtitles_input_df.empty:
-            for _index, row in subtitles_input_df.iterrows():
+        if current_subtitles_data and len(current_subtitles_data) > 0:
+            # Use the stored subtitle data that contains word effects
+            subtitles_data = current_subtitles_data
+            log_to_gradio(f"Using stored subtitle data with word effects for GIF generation ({len(subtitles_data)} words).")
+        elif subtitles_input_df is not None and not subtitles_input_df.empty:
+            # Fallback: rebuild from DataFrame if no stored data (but this loses word effects)
+            log_to_gradio("Warning: No stored subtitle data available, rebuilding from DataFrame (word effects will be lost).")
+            for i, (_, row) in enumerate(subtitles_input_df.iterrows()):
                 try: 
-                    subtitles_data.append({
+                    word_entry = {
                         "word": str(row["Word"]), 
                         "start": float(row["Start (s)"]), 
                         "end": float(row["End (s)"])
-                    })
-                except (KeyError, ValueError): 
-                    log_to_gradio("Error: Subtitle data invalid.")
+                    }
+                    subtitles_data.append(word_entry)
+                except (KeyError, ValueError) as e: 
+                    log_to_gradio(f"Error processing subtitle row: {e}")
                     return "\n".join(log_messages), None, gr.update(visible=False)
-        elif current_subtitles_data:
-            # Fallback to stored subtitle data
-            subtitles_data = current_subtitles_data
-            log_to_gradio("Using stored subtitle data for GIF generation.")
+        else:
+            log_to_gradio("Error: No subtitle data available for GIF generation.")
+            return "\n".join(log_messages), None, gr.update(visible=False)
 
         try:
             target_gif_fps = int(gif_fps_val)
@@ -663,8 +912,19 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
         regenerate_preview_button,
         preview_video_path_state,
         total_frames_in_preview_state,
-        current_subtitles_data_state
+        current_subtitles_data_state,
+        word_effects_section,
+        active_effect_display
     ]
+    
+    # Add all word control components to outputs
+    for control_row in word_control_rows:
+        fetch_outputs.extend([
+            control_row["row"],
+            control_row["label"],
+            control_row["checkbox"],
+            control_row["color"]
+        ])
 
     fetch_button.click(
         fn=handle_fetch_transcribe_and_preview,
@@ -672,7 +932,85 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
         outputs=fetch_outputs
     )
 
-    # Inputs for regenerate_preview_button
+    # Handler for syncing subtitle table edits with word-level controls
+    def handle_subtitle_table_change(edited_subtitles_df, font_color_from_ui, current_word_data, *effect_args):
+        """Sync subtitle table edits with word-level controls."""
+        
+        # Create a map of existing word effects by word text for preservation
+        existing_effects = {}
+        if current_word_data:
+            for word in current_word_data:
+                if "word_effects" in word:
+                    existing_effects[word["word"]] = word["word_effects"]
+        
+        # Convert DataFrame to word data format
+        word_data = []
+        if edited_subtitles_df is not None and not edited_subtitles_df.empty:
+            for _, row in edited_subtitles_df.iterrows():
+                try:
+                    word_entry = {
+                        "word": str(row["Word"]), 
+                        "start": float(row["Start (s)"]), 
+                        "end": float(row["End (s)"])
+                    }
+                    
+                    # Preserve existing word effects if they exist
+                    if word_entry["word"] in existing_effects:
+                        word_entry["word_effects"] = existing_effects[word_entry["word"]]
+                    
+                    word_data.append(word_entry)
+                except (KeyError, ValueError):
+                    continue
+        
+        # Update word controls with the edited data
+        word_control_updates = update_word_level_controls(
+            word_data, effect_args, word_control_rows, word_effects_section, active_effect_display, font_color_from_ui, skip_colors=True
+        )
+        
+        # Convert dictionary updates to list format for Gradio
+        result_list = []
+        
+        # Add word control updates in order
+        for control_row in word_control_rows:
+            result_list.append(word_control_updates.get(control_row["row"], gr.update()))
+            result_list.append(word_control_updates.get(control_row["label"], gr.update()))
+            result_list.append(word_control_updates.get(control_row["checkbox"], gr.update()))
+            result_list.append(word_control_updates.get(control_row["color"], gr.update()))
+        
+        # Add section visibility and active effect display
+        result_list.append(word_control_updates.get(word_effects_section, gr.update()))
+        result_list.append(word_control_updates.get(active_effect_display, gr.update()))
+        
+        return result_list
+
+    # Helper function to apply word control settings to word data
+    def apply_word_control_settings_to_data(word_data, word_control_rows, active_effect):
+        """Apply current word control checkbox and color settings to word data."""
+        if not active_effect or not word_data:
+            return word_data
+        
+        # Create a copy of word_data to modify
+        updated_word_data = []
+        
+        for i, word_entry in enumerate(word_data):
+            # Copy the word entry
+            updated_word_entry = word_entry.copy()
+            
+            # Apply word-level effects to all words by default when globally enabled
+            # Users can then selectively disable via word controls
+            word_effects = {active_effect.slug: True}  # Default to enabled for all words
+            word_color = APP_SETTINGS.typography.font_color_hex
+            
+            updated_word_entry["word_effects"] = {
+                "effects": word_effects,
+                f"{active_effect.slug}_color": word_color
+            }
+            
+            updated_word_data.append(updated_word_entry)
+        
+        return updated_word_data
+
+    # Inputs for regenerate_preview_button (include word control components)
     regenerate_inputs = [
         current_video_file_path_state,
         subtitles_df,
@@ -684,6 +1022,13 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
         outline_color, 
         outline_width
     ] + effect_components_list
+    
+    # Add all word control components as inputs so we can read their current values
+    for control_row in word_control_rows:
+        regenerate_inputs.extend([
+            control_row["checkbox"],
+            control_row["color"]
+        ])
     
     regenerate_outputs = [
         log_output,
@@ -700,6 +1045,24 @@ with gr.Blocks(theme=matrix_theme, title="AutoGIF") as app:
         fn=handle_regenerate_preview,
         inputs=regenerate_inputs,
         outputs=regenerate_outputs
+    )
+    
+    # Set up subtitle table change handler to sync with word controls
+    sync_inputs = [subtitles_df, font_color, current_subtitles_data_state] + effect_components_list
+    sync_outputs = []
+    for control_row in word_control_rows:
+        sync_outputs.extend([
+            control_row["row"],
+            control_row["label"],
+            control_row["checkbox"],
+            control_row["color"]
+        ])
+    sync_outputs.extend([word_effects_section, active_effect_display])
+    
+    subtitles_df.change(
+        fn=handle_subtitle_table_change,
+        inputs=sync_inputs,
+        outputs=sync_outputs
     )
 
     # Inputs for generate_button (now includes frame selectors and all settings for GIF)

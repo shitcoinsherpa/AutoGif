@@ -6,6 +6,11 @@ from autogif import config # For USER_CONFIG_FILE
 
 # --- Pydantic Models for Settings ---
 
+class WordEffectSettings(BaseModel):
+    """Settings for word-level effects"""
+    effects: Dict[str, bool] = Field(default_factory=dict)  # effect_slug -> enabled
+    color: Optional[str] = None  # Override color for this word
+
 class EffectSetting(BaseModel):
     enabled: bool = True
     intensity: int = 50

@@ -163,6 +163,10 @@ class SparkleEffect(EffectBase):
         return "Sparkle"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 65
 
@@ -221,7 +225,7 @@ class SparkleEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -240,7 +244,7 @@ class SparkleEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         

@@ -170,6 +170,10 @@ class FadeEffect(EffectBase):
         return "Fade"
 
     @property
+    def supports_word_level(self) -> bool:
+        return False
+
+    @property
     def default_intensity(self) -> int:
         return 50 # Intensity 0-100. Controls how much of duration is fade.
 
@@ -236,7 +240,7 @@ class FadeEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -281,7 +285,7 @@ class FadeEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
 

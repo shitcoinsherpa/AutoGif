@@ -64,6 +64,10 @@ class GlitchEffect(EffectBase):
         return "Glitch"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 50
 
@@ -97,15 +101,15 @@ class GlitchEffect(EffectBase):
             
             try:
                 draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, 
-                         anchor="ms", stroke_width=outline_width, stroke_fill=pil_outline_color)
+                         anchor="mm", stroke_width=outline_width, stroke_fill=pil_outline_color)
             except (TypeError, AttributeError):
                 if outline_width > 0:
                     for dx in range(-outline_width, outline_width + 1):
                         for dy in range(-outline_width, outline_width + 1):
                             if dx != 0 or dy != 0:
                                 draw.text((text_anchor_x + dx, text_anchor_y + dy), text, 
-                                        font=font, fill=pil_outline_color, anchor="ms")
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="ms")
+                                        font=font, fill=pil_outline_color, anchor="mm")
+                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="mm")
             
             return blank_canvas
         
@@ -127,15 +131,15 @@ class GlitchEffect(EffectBase):
             
             try:
                 draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, 
-                         anchor="ms", stroke_width=outline_width, stroke_fill=pil_outline_color)
+                         anchor="mm", stroke_width=outline_width, stroke_fill=pil_outline_color)
             except (TypeError, AttributeError):
                 if outline_width > 0:
                     for dx in range(-outline_width, outline_width + 1):
                         for dy in range(-outline_width, outline_width + 1):
                             if dx != 0 or dy != 0:
                                 draw.text((text_anchor_x + dx, text_anchor_y + dy), text, 
-                                        font=font, fill=pil_outline_color, anchor="ms")
-                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="ms")
+                                        font=font, fill=pil_outline_color, anchor="mm")
+                draw.text((text_anchor_x, text_anchor_y), text, font=font, fill=pil_font_color, anchor="mm")
             
             return blank_canvas
         
@@ -157,7 +161,7 @@ class GlitchEffect(EffectBase):
         draw_red = ImageDraw.Draw(red_canvas)
         try:
             draw_red.text((text_anchor_x + red_offset_x, text_anchor_y + red_offset_y), 
-                         text, font=font, fill=(255, 0, 0, 255), anchor="ms")
+                         text, font=font, fill=(255, 0, 0, 255), anchor="mm")
         except:
             draw_red.text((text_anchor_x + red_offset_x, text_anchor_y + red_offset_y), 
                          text, font=font, fill=(255, 0, 0, 255))
@@ -166,7 +170,7 @@ class GlitchEffect(EffectBase):
         draw_green = ImageDraw.Draw(green_canvas)
         try:
             draw_green.text((text_anchor_x + green_offset_x, text_anchor_y + green_offset_y), 
-                           text, font=font, fill=(0, 255, 0, 255), anchor="ms")
+                           text, font=font, fill=(0, 255, 0, 255), anchor="mm")
         except:
             draw_green.text((text_anchor_x + green_offset_x, text_anchor_y + green_offset_y), 
                            text, font=font, fill=(0, 255, 0, 255))
@@ -175,7 +179,7 @@ class GlitchEffect(EffectBase):
         draw_blue = ImageDraw.Draw(blue_canvas)
         try:
             draw_blue.text((text_anchor_x + blue_offset_x, text_anchor_y + blue_offset_y), 
-                          text, font=font, fill=(0, 0, 255, 255), anchor="ms")
+                          text, font=font, fill=(0, 0, 255, 255), anchor="mm")
         except:
             draw_blue.text((text_anchor_x + blue_offset_x, text_anchor_y + blue_offset_y), 
                           text, font=font, fill=(0, 0, 255, 255))

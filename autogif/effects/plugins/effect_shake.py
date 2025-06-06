@@ -174,16 +174,20 @@ class ShakeEffect(EffectBase):
     def default_intensity(self) -> int:
         return 50
 
+    @property
+    def supports_word_level(self) -> bool:
+        return True
+
     def prepare(self, target_fps: int, **kwargs) -> None:
         """Initialize shake parameters for smooth multi-frequency shake"""
         self.fps = target_fps
         
-        # Create multiple frequency components for realistic shake
-        # Like real hand tremor or earthquake motion
+        # Adjusted frequency components for more controlled shake
+        # Lower frequencies for smoother, less jarring movement
         self.shake_frequencies = [
-            {'freq': 8.0, 'amp_scale': 1.0},    # Primary shake
-            {'freq': 15.0, 'amp_scale': 0.6},   # Secondary tremor
-            {'freq': 25.0, 'amp_scale': 0.3},   # Fine vibration
+            {'freq': 5.0, 'amp_scale': 1.0},     # Primary shake - slower, smoother
+            {'freq': 12.0, 'amp_scale': 0.5},    # Secondary tremor - moderate speed
+            {'freq': 20.0, 'amp_scale': 0.25},   # Fine vibration - subtle high freq
         ]
         
         # Random phase offsets for each frequency to avoid predictable patterns
@@ -196,8 +200,19 @@ class ShakeEffect(EffectBase):
         if intensity <= 0:
             return 0.0, 0.0
         
-        # Base amplitude from intensity
-        base_amplitude = (intensity / 100.0) * 8.0  # Max 8 pixels
+        # Adjusted amplitude scaling for more controlled movement
+        # Low intensity = vibration (0-30): 0-1.2 pixels
+        # Medium intensity = tremor (30-70): 1.2-3.5 pixels  
+        # High intensity = earthquake (70-100): 3.5-5 pixels
+        if intensity <= 30:
+            # Vibration mode: very subtle movement
+            base_amplitude = (intensity / 30.0) * 1.2
+        elif intensity <= 70:
+            # Tremor mode: moderate movement
+            base_amplitude = 1.2 + ((intensity - 30) / 40.0) * 2.3
+        else:
+            # Earthquake mode: stronger but still controlled
+            base_amplitude = 3.5 + ((intensity - 70) / 30.0) * 1.5
         
         total_x = 0.0
         total_y = 0.0
@@ -211,12 +226,16 @@ class ShakeEffect(EffectBase):
             # Scale by amplitude
             amplitude = base_amplitude * freq_data['amp_scale']
             total_x += x_component * amplitude
-            total_y += y_component * amplitude
+            
+            # Reduce vertical movement to prevent overlap in multi-line text
+            # Vertical movement is only 40% of horizontal to prevent line overlap
+            total_y += y_component * amplitude * 0.4
         
-        # Add some randomness for less predictable motion (but keep it smooth)
-        random_factor = 0.15  # 15% randomness
+        # Add minimal randomness for less predictable motion
+        # Less randomness at low intensities for smoother vibration
+        random_factor = 0.05 if intensity <= 30 else 0.10  # 5% for vibration, 10% for stronger
         noise_x = (random.random() - 0.5) * base_amplitude * random_factor
-        noise_y = (random.random() - 0.5) * base_amplitude * random_factor
+        noise_y = (random.random() - 0.5) * base_amplitude * random_factor * 0.4  # Less vertical noise
         
         return total_x + noise_x, total_y + noise_y
 
@@ -266,7 +285,7 @@ class ShakeEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
             

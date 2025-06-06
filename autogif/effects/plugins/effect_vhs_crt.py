@@ -66,6 +66,10 @@ class VHSCRTEffect(EffectBase):
         return "VHS/CRT"
 
     @property
+    def supports_word_level(self) -> bool:
+        return False
+
+    @property
     def default_intensity(self) -> int:
         return 60
 

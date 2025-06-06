@@ -24,6 +24,12 @@ class EffectBase(ABC):
         """The default intensity for the effect (0-100)."""
         pass
 
+    @property
+    @abstractmethod
+    def supports_word_level(self) -> bool:
+        """Whether this effect can be applied to individual words rather than entire captions."""
+        pass
+
     @abstractmethod
     def prepare(self, **kwargs) -> None:
         """

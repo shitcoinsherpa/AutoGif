@@ -169,6 +169,10 @@ class NeonEffect(EffectBase):
         return "Neon"
 
     @property
+    def supports_word_level(self) -> bool:
+        return True
+
+    @property
     def default_intensity(self) -> int:
         return 80 # Controls glow spread/brightness
 
@@ -203,7 +207,7 @@ class NeonEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -244,7 +248,7 @@ class NeonEffect(EffectBase):
                 core_text_color_pil, 
                 core_text_color_pil, 
                 max(2, outline_width), 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             
@@ -270,7 +274,7 @@ class NeonEffect(EffectBase):
                 bright_glow_color, 
                 bright_glow_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             
@@ -294,7 +298,7 @@ class NeonEffect(EffectBase):
             final_text_color, 
             parse_color_to_pil_format(outline_color) if glow_strength < 0.5 else bright_glow_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
 

@@ -174,6 +174,10 @@ class GlowEffect(EffectBase):
     def default_intensity(self) -> int:
         return 70 # Default intensity 0-100, controls blur radius/spread
 
+    @property
+    def supports_word_level(self) -> bool:
+        return True
+
     def prepare(self, **kwargs) -> None:
         pass # No specific preparation needed for this stateless glow
 
@@ -209,7 +213,7 @@ class GlowEffect(EffectBase):
                 font_color, 
                 outline_color, 
                 outline_width, 
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             return blank_canvas
@@ -260,7 +264,7 @@ class GlowEffect(EffectBase):
             font_color_pil, 
             font_color_pil,  # Use same color for fill and stroke
             3,  # Thick stroke for outer glow
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         
@@ -285,7 +289,7 @@ class GlowEffect(EffectBase):
             glow_color, 
             glow_color, 
             max(2, outline_width), 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
         
@@ -312,7 +316,7 @@ class GlowEffect(EffectBase):
                 bright_white,  # Use white for bright core
                 bright_white, 
                 1,  # Thin stroke
-                anchor="ms",
+                anchor="mm",
                 max_width=int(frame_width * 0.9)
             )
             
@@ -333,7 +337,7 @@ class GlowEffect(EffectBase):
             font_color, 
             outline_color, 
             outline_width, 
-            anchor="ms",
+            anchor="mm",
             max_width=int(frame_width * 0.9)
         )
 
